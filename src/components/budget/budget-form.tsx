@@ -9,16 +9,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from '@/components/ui/card'; // Added CardDescription
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
-import { useMemo } from 'react'; // Import useMemo
+import { useMemo, useEffect } from 'react'; // Import useMemo and useEffect
 
 const budgetFormSchema = z.object({
     description: z.string().min(1, 'Description cannot be empty'),
     amount: z.preprocess(
-        (val) => (val === '' || val === null || val === undefined ? undefined : typeof val === 'string' ? parseFloat(val.replace(/,/g, '')) : val), // Handle potential commas
+        // Convert empty string/null/undefined to undefined for zod, parse valid strings/numbers
+        (val) => (val === '' || val === null || val === undefined ? undefined : typeof val === 'string' ? parseFloat(val.replace(/,/g, '')) : val),
         z.number({ required_error: "Amount is required", invalid_type_error: "Amount must be a number" }).positive('Amount must be a positive number')
     ),
     year: z.preprocess(
@@ -30,11 +31,13 @@ const budgetFormSchema = z.object({
         z.number({ required_error: "Month is required", invalid_type_error: "Month must be a number" }).int().min(1, 'Enter a valid month (1-12)').max(12, 'Enter a valid month (1-12)')
     ),
     type: z.enum(['CAPEX', 'OPEX'], { required_error: "Type is required" }),
-    business_line_id: z.string().nullable().optional(), // Can be null or a string ID
-    cost_center_id: z.string().nullable().optional(), // Can be null or a string ID
+    // Use string for select value, server action will parse/validate __NONE__
+    business_line_id: z.string().nullable().optional(),
+    cost_center_id: z.string().nullable().optional(),
 });
 
-const NONE_VALUE = "__NONE__"; // Special value for representing null in Select
+// Special value for representing null in Select dropdowns
+const NONE_VALUE = "__NONE__";
 
 
 interface BudgetFormProps {
@@ -51,28 +54,50 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
 
     const form = useForm<z.infer<typeof budgetFormSchema>>({
         resolver: zodResolver(budgetFormSchema),
+        // Initialize with strings or NONE_VALUE to avoid uncontrolled input issues
         defaultValues: {
             description: initialData?.description || '',
-            amount: initialData?.amount ? String(initialData.amount) : '',
-            year: initialData?.year ? String(initialData.year) : '',
-            month: initialData?.month ? String(initialData.month) : '',
+            amount: initialData?.amount !== undefined ? String(initialData.amount) : '',
+            year: initialData?.year !== undefined ? String(initialData.year) : '',
+            month: initialData?.month !== undefined ? String(initialData.month) : '',
             type: initialData?.type || undefined,
             business_line_id: initialData?.business_line_id ? String(initialData.business_line_id) : NONE_VALUE,
             cost_center_id: initialData?.cost_center_id ? String(initialData.cost_center_id) : NONE_VALUE,
         },
     });
 
-    const { formState, handleSubmit, control, watch } = form;
+    const { formState, handleSubmit, control, watch, reset } = form;
     const { isSubmitting } = formState;
 
-    // Filter cost centers based on the selected business line using M2M relationship
+    // Reset form if initialData changes (e.g., navigating between edit pages or after save)
+     useEffect(() => {
+         reset({
+             description: initialData?.description || '',
+             amount: initialData?.amount !== undefined ? String(initialData.amount) : '',
+             year: initialData?.year !== undefined ? String(initialData.year) : '',
+             month: initialData?.month !== undefined ? String(initialData.month) : '',
+             type: initialData?.type || undefined,
+             business_line_id: initialData?.business_line_id ? String(initialData.business_line_id) : NONE_VALUE,
+             cost_center_id: initialData?.cost_center_id ? String(initialData.cost_center_id) : NONE_VALUE,
+         });
+     }, [initialData, reset]);
+
+    // Watch the selected business line ID
     const selectedBusinessLineId = watch('business_line_id');
+
+    // Filter cost centers based on the selected business line using M2M relationship
     const filteredCostCenters = useMemo(() => {
+        // If no business line is selected or 'None' is chosen, show all cost centers initially
         if (!selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE) {
-            // If no business line is selected, show all cost centers
-            return costCenters;
+            // In 'add' mode, maybe we shouldn't show all CCs until BL is selected?
+            // For 'edit' mode, we need to show the initially selected one even if BL changes.
+            // Let's show cost centers *only* if a business line is selected.
+            return [];
         }
         const targetBlId = parseInt(selectedBusinessLineId, 10);
+        if (isNaN(targetBlId)) {
+            return []; // Invalid BL ID selected
+        }
         // Filter cost centers that have the selected business line in their associations
         return costCenters.filter(cc => cc.businessLines.some(bl => bl.id === targetBlId));
     }, [selectedBusinessLineId, costCenters]);
@@ -82,18 +107,14 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
 
         const formData = new FormData();
         formData.append('description', data.description);
-        // Ensure amount is sent without formatting issues if needed
-        formData.append('amount', String(data.amount)); // Convert back to string for FormData
-        formData.append('year', String(data.year));
-        formData.append('month', String(data.month));
+        formData.append('amount', String(data.amount)); // Send as string
+        formData.append('year', String(data.year));     // Send as string
+        formData.append('month', String(data.month));    // Send as string
         formData.append('type', data.type);
-        if (data.business_line_id && data.business_line_id !== NONE_VALUE) {
-           formData.append('business_line_id', data.business_line_id);
-        }
-         if (data.cost_center_id && data.cost_center_id !== NONE_VALUE) {
-           formData.append('cost_center_id', data.cost_center_id);
-        }
 
+        // Send the actual value ('__NONE__' or the ID) to the server action for processing
+        formData.append('business_line_id', data.business_line_id ?? NONE_VALUE);
+        formData.append('cost_center_id', data.cost_center_id ?? NONE_VALUE);
 
         const result = await onSubmit(formData);
 
@@ -104,8 +125,8 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
         });
 
         if (result.success) {
-            router.push('/budgets');
-            router.refresh();
+            router.push('/budgets'); // Navigate back to the list on success
+            router.refresh(); // Ensure the list page is updated
         }
     };
 
@@ -113,6 +134,9 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
         <Card className="w-full max-w-2xl mx-auto">
             <CardHeader>
                 <CardTitle>{formType === 'add' ? 'Add New Budget Entry' : 'Edit Budget Entry'}</CardTitle>
+                 <CardDescription>
+                    Fill in the details for the budget entry. Select a Business Line first to filter compatible Cost Centers.
+                 </CardDescription>
             </CardHeader>
             <Form {...form}>
                 <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-6">
@@ -139,7 +163,8 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                <FormItem>
                                  <FormLabel>Amount</FormLabel>
                                  <FormControl>
-                                   <Input type="number" step="0.01" placeholder="1000.00" {...field} value={field.value ?? ''} />
+                                   {/* Use text type initially to allow empty string, validation handles parsing */}
+                                   <Input type="text" inputMode="decimal" placeholder="1000.00" {...field} />
                                  </FormControl>
                                  <FormMessage />
                                </FormItem>
@@ -151,7 +176,7 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                 render={({ field }) => (
                                     <FormItem>
                                         <FormLabel>Type (CAPEX/OPEX)</FormLabel>
-                                         <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                         <Select onValueChange={field.onChange} value={field.value} defaultValue={initialData?.type}>
                                             <FormControl>
                                                 <SelectTrigger>
                                                      <SelectValue placeholder="Select type" />
@@ -176,7 +201,8 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                     <FormItem>
                                         <FormLabel>Year</FormLabel>
                                         <FormControl>
-                                            <Input type="number" placeholder="YYYY" {...field} value={field.value ?? ''} />
+                                            {/* Use text type initially */}
+                                            <Input type="text" inputMode="numeric" placeholder="YYYY" {...field} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -189,7 +215,8 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                     <FormItem>
                                         <FormLabel>Month</FormLabel>
                                          <FormControl>
-                                            <Input type="number" placeholder="MM" {...field} value={field.value ?? ''} />
+                                            {/* Use text type initially */}
+                                            <Input type="text" inputMode="numeric" placeholder="MM" {...field} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -203,10 +230,14 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                              name="business_line_id"
                              render={({ field }) => (
                                <FormItem>
-                                 <FormLabel>Business Line</FormLabel> {/* No longer optional */}
+                                 <FormLabel>Business Line</FormLabel>
                                  <Select
-                                    onValueChange={(value) => field.onChange(value)}
-                                    value={field.value ?? NONE_VALUE}
+                                    onValueChange={(value) => {
+                                        field.onChange(value);
+                                        // Reset cost center when business line changes
+                                        form.setValue('cost_center_id', NONE_VALUE);
+                                    }}
+                                    value={field.value ?? NONE_VALUE} // Ensure value is string or __NONE__
                                   >
                                    <FormControl>
                                      <SelectTrigger>
@@ -222,7 +253,7 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                      ))}
                                    </SelectContent>
                                  </Select>
-                                  <FormMessage /> {/* Add message for required field */}
+                                  <FormMessage />
                                </FormItem>
                              )}
                            />
@@ -231,46 +262,51 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                 name="cost_center_id"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Cost Center</FormLabel> {/* No longer optional */}
+                                        <FormLabel>Cost Center</FormLabel>
                                          <Select
                                             onValueChange={(value) => field.onChange(value)}
-                                            value={field.value ?? NONE_VALUE}
-                                            // Disable if no BL selected OR if BL selected but no matching CCs
-                                            disabled={!selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE || filteredCostCenters.length === 0}
+                                            value={field.value ?? NONE_VALUE} // Ensure value is string or __NONE__
+                                            // Disable if no BL selected OR if BL selected but no matching CCs available
+                                            disabled={!selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE}
                                             >
                                             <FormControl>
                                                 <SelectTrigger>
-                                                    <SelectValue placeholder="Select cost center" />
+                                                    <SelectValue placeholder={
+                                                         !selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE
+                                                         ? "Select Business Line first"
+                                                         : "Select cost center"
+                                                    } />
                                                 </SelectTrigger>
                                             </FormControl>
                                             <SelectContent>
                                                  <SelectItem value={NONE_VALUE}>-- None --</SelectItem>
-                                                {filteredCostCenters.map((center) => (
+                                                 {/* Render options only if a valid BL is selected */}
+                                                 {selectedBusinessLineId && selectedBusinessLineId !== NONE_VALUE && filteredCostCenters.map((center) => (
                                                     <SelectItem key={center.id} value={String(center.id)}>
                                                         {center.name}
-                                                        {/* Displaying associated BLs in dropdown might be too much? Keep it simple */}
-                                                        {/* {center.businessLines.length > 0 && ` (${center.businessLines.map(bl=>bl.name).join(', ')})`} */}
                                                     </SelectItem>
                                                 ))}
-                                                 {filteredCostCenters.length === 0 && selectedBusinessLineId && selectedBusinessLineId !== NONE_VALUE && (
-                                                      <p className="p-2 text-xs text-muted-foreground">No cost centers associated with the selected business line.</p>
+                                                {/* Provide feedback if no associated cost centers */}
+                                                {selectedBusinessLineId && selectedBusinessLineId !== NONE_VALUE && filteredCostCenters.length === 0 && (
+                                                      <div className="p-2 text-xs text-muted-foreground text-center italic">No cost centers associated with the selected business line.</div>
                                                 )}
-                                                {!selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE && (
-                                                      <p className="p-2 text-xs text-muted-foreground">Select a Business Line first.</p>
-                                                )}
+                                                 {/* Initial state message */}
+                                                 {(!selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE) && (
+                                                     <div className="p-2 text-xs text-muted-foreground text-center italic">Select a Business Line to see available Cost Centers.</div>
+                                                 )}
                                             </SelectContent>
                                         </Select>
-                                        <FormMessage /> {/* Add message for required field */}
+                                        <FormMessage />
                                     </FormItem>
                                 )}
                             />
                         </div>
                     </CardContent>
-                    <CardFooter>
+                    <CardFooter className="flex justify-between">
                         <Button type="submit" disabled={isSubmitting}>
                             {isSubmitting ? 'Saving...' : (formType === 'add' ? 'Add Entry' : 'Update Entry')}
                         </Button>
-                         <Button type="button" variant="outline" onClick={() => router.back()} className="ml-2">
+                         <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting}>
                             Cancel
                         </Button>
                     </CardFooter>

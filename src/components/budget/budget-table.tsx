@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { Budget, BusinessLine, CostCenter } from '@/types';
@@ -35,7 +36,7 @@ export function BudgetTable({ budgets }: BudgetTableProps) {
              variant: result.success ? 'default' : 'destructive',
          });
           if (result.success) {
-             // Optionally refresh the page data or handle state update
+             // Refresh the page data after deletion
              router.refresh();
          }
      };
@@ -67,23 +68,25 @@ export function BudgetTable({ budgets }: BudgetTableProps) {
                     <TableRow key={budget.id}>
                         <TableCell className="font-medium">{budget.description}</TableCell>
                         <TableCell>{formatCurrency(budget.amount)}</TableCell>
-                        <TableCell>{`${budget.month}/${budget.year}`}</TableCell>
+                        <TableCell>{`${String(budget.month).padStart(2, '0')}/${budget.year}`}</TableCell>
                         <TableCell>
                              <Badge variant={budget.type === 'CAPEX' ? 'secondary' : 'outline'}>
                                  {budget.type}
                              </Badge>
                         </TableCell>
-                        <TableCell>{budget.business_line_name || '-'}</TableCell>
-                        <TableCell>{budget.cost_center_name || '-'}</TableCell>
-                        <TableCell className="text-right space-x-2">
+                        <TableCell>{budget.business_line_name || <span className="text-muted-foreground">-</span>}</TableCell>
+                        <TableCell>{budget.cost_center_name || <span className="text-muted-foreground">-</span>}</TableCell>
+                        <TableCell className="text-right space-x-1">
+                             {/* Edit Button */}
                              <Link href={`/budgets/${budget.id}/edit`} passHref>
-                                 <Button variant="ghost" size="icon" aria-label="Edit Budget">
+                                 <Button variant="ghost" size="icon" aria-label={`Edit budget entry ${budget.description}`}>
                                     <Pencil className="h-4 w-4" />
                                 </Button>
                              </Link>
+                             {/* Delete Button with Confirmation */}
                              <ConfirmDialog
                                 trigger={
-                                    <Button variant="ghost" size="icon" aria-label="Delete Budget" className="text-destructive hover:text-destructive/80">
+                                    <Button variant="ghost" size="icon" aria-label={`Delete budget entry ${budget.description}`} className="text-destructive hover:text-destructive/80">
                                         <Trash2 className="h-4 w-4" />
                                     </Button>
                                 }
@@ -100,3 +103,4 @@ export function BudgetTable({ budgets }: BudgetTableProps) {
         </Table>
     );
 }
+
