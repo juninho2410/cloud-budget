@@ -115,9 +115,12 @@ async function removeColumnIfExists(db: Database, tableName: string, columnName:
 export async function getDb(): Promise<Database> {
   if (!db) {
     try {
+        // Enable verbose logging for the sqlite3 driver *before* opening
+        sqlite3.verbose();
+
         db = await open({
           filename: './cloudwise.db', // Use a file for persistence
-          driver: sqlite3.verbose(), // Use verbose driver for more detailed logs
+          driver: sqlite3.Database // Use the Database class from the sqlite3 module
         });
         console.log("Database connection opened.");
 
@@ -142,9 +145,9 @@ export async function getDb(): Promise<Database> {
 
         // 2. Cost Centers Table (No created_at, no updated_at)
         // Check if the old columns exist before creating the table without them
-        await removeColumnIfExists(db, 'cost_centers', 'business_line_id');
-        await removeColumnIfExists(db, 'cost_centers', 'created_at'); // Ensure removal
-        await removeColumnIfExists(db, 'cost_centers', 'updated_at'); // Ensure removal
+        // await removeColumnIfExists(db, 'cost_centers', 'business_line_id'); // No longer needed as table is created correctly
+        // await removeColumnIfExists(db, 'cost_centers', 'created_at'); // Ensure removal if schema changes
+        // await removeColumnIfExists(db, 'cost_centers', 'updated_at'); // Ensure removal if schema changes
 
         await db.exec(`
           CREATE TABLE IF NOT EXISTS cost_centers (
@@ -196,11 +199,15 @@ export async function getDb(): Promise<Database> {
         await db.exec(`DROP TRIGGER IF EXISTS update_cost_centers_updated_at;`);
         console.log("Dropped trigger update_cost_centers_updated_at if it existed.");
 
+         // Triggers might fail if the updated_at column wasn't added successfully earlier
+        // Wrap trigger creation in checks or try/catch if necessary, though addColumnIfNotExists should handle it.
+
         await db.exec(`
           -- Trigger for business_lines (only if updated_at column exists)
           CREATE TRIGGER IF NOT EXISTS update_business_lines_updated_at
           AFTER UPDATE ON business_lines
           FOR EACH ROW
+          WHEN (SELECT 1 FROM pragma_table_info('business_lines') WHERE name='updated_at') = 1 -- Only create if column exists
           BEGIN
               UPDATE business_lines SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
           END;
@@ -209,6 +216,7 @@ export async function getDb(): Promise<Database> {
            CREATE TRIGGER IF NOT EXISTS update_budgets_updated_at
            AFTER UPDATE ON budgets
            FOR EACH ROW
+            WHEN (SELECT 1 FROM pragma_table_info('budgets') WHERE name='updated_at') = 1 -- Only create if column exists
            BEGIN
                UPDATE budgets SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
            END;
@@ -220,7 +228,11 @@ export async function getDb(): Promise<Database> {
     } catch (error) {
         console.error("Failed to initialize database:", error);
         if (db) {
-            await db.close();
+            try {
+                 await db.close();
+            } catch (closeError) {
+                 console.error("Failed to close DB after initialization error:", closeError);
+            }
             db = null;
         }
         throw error;
@@ -241,5 +253,3 @@ export async function closeDb(): Promise<void> {
         }
     }
 }
-
-    
