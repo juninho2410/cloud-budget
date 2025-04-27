@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { Budget, BusinessLine, CostCenter, BudgetFormData } from '@/types';
@@ -32,6 +33,8 @@ const budgetFormSchema = z.object({
     business_line_id: z.string().nullable().optional(), // Can be null or a string ID
     cost_center_id: z.string().nullable().optional(), // Can be null or a string ID
 });
+
+const NONE_VALUE = "__NONE__"; // Special value for representing null in Select
 
 
 interface BudgetFormProps {
@@ -194,14 +197,17 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                              render={({ field }) => (
                                <FormItem>
                                  <FormLabel>Business Line (Optional)</FormLabel>
-                                 <Select onValueChange={field.onChange} value={field.value ?? ''}>
+                                 <Select
+                                    onValueChange={(value) => field.onChange(value === NONE_VALUE ? null : value)}
+                                    value={field.value ?? NONE_VALUE}
+                                  >
                                    <FormControl>
                                      <SelectTrigger>
                                        <SelectValue placeholder="Select business line" />
                                      </SelectTrigger>
                                    </FormControl>
                                    <SelectContent>
-                                     <SelectItem value="">-- None --</SelectItem>
+                                     <SelectItem value={NONE_VALUE}>-- None --</SelectItem>
                                      {businessLines.map((line) => (
                                        <SelectItem key={line.id} value={String(line.id)}>
                                          {line.name}
@@ -220,8 +226,8 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                     <FormItem>
                                         <FormLabel>Cost Center (Optional)</FormLabel>
                                          <Select
-                                            onValueChange={field.onChange}
-                                            value={field.value ?? ''}
+                                            onValueChange={(value) => field.onChange(value === NONE_VALUE ? null : value)}
+                                            value={field.value ?? NONE_VALUE}
                                             disabled={!selectedBusinessLineId && costCenters.length > 0 && filteredCostCenters.length === 0} // Disable if no BL selected and there are CCs but none match
                                             >
                                             <FormControl>
@@ -230,7 +236,7 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                                 </SelectTrigger>
                                             </FormControl>
                                             <SelectContent>
-                                                 <SelectItem value="">-- None --</SelectItem>
+                                                 <SelectItem value={NONE_VALUE}>-- None --</SelectItem>
                                                 {filteredCostCenters.map((center) => (
                                                     <SelectItem key={center.id} value={String(center.id)}>
                                                         {center.name}
@@ -258,3 +264,4 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
         </Card>
     );
 }
+

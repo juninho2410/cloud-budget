@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { CostCenter, BusinessLine } from '@/types';
@@ -17,6 +18,7 @@ const costCenterSchema = z.object({
     business_line_id: z.string().nullable().optional(), // Stored as string from select, can be null
 });
 
+const NONE_VALUE = "__NONE__"; // Special value for representing null in Select
 
 interface CostCenterFormProps {
     initialData?: CostCenter | null;
@@ -91,14 +93,17 @@ export function CostCenterForm({
                     render={({ field }) => (
                          <FormItem>
                              <FormLabel>Business Line (Optional)</FormLabel>
-                             <Select onValueChange={field.onChange} value={field.value ?? ''}>
+                             <Select
+                                onValueChange={(value) => field.onChange(value === NONE_VALUE ? null : value)}
+                                value={field.value ?? NONE_VALUE}
+                             >
                                 <FormControl>
                                     <SelectTrigger>
                                          <SelectValue placeholder="Assign to Business Line" />
                                     </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
-                                     <SelectItem value="">-- None --</SelectItem>
+                                     <SelectItem value={NONE_VALUE}>-- None --</SelectItem>
                                      {businessLines.map((line) => (
                                          <SelectItem key={line.id} value={String(line.id)}>
                                              {line.name}
@@ -125,3 +130,4 @@ export function CostCenterForm({
         </Form>
     );
 }
+
