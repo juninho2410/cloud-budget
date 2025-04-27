@@ -1,4 +1,5 @@
-import { getBusinessLines, getCostCenters, getBudgetById, updateBudgetEntry } from '@/app/actions';
+
+import { getBusinessLines, getCostCentersWithBusinessLines, getBudgetById, updateBudgetEntry } from '@/app/actions'; // Fetch CostCentersWithBusinessLines
 import { BudgetForm } from '@/components/budget/budget-form';
 import { notFound } from 'next/navigation';
 
@@ -17,7 +18,7 @@ export default async function EditBudgetPage({ params }: EditBudgetPageProps) {
     const [budget, businessLines, costCenters] = await Promise.all([
         getBudgetById(budgetId),
         getBusinessLines(),
-        getCostCenters(),
+        getCostCentersWithBusinessLines(), // Use the action that fetches associations
     ]);
 
     if (!budget) {
@@ -33,7 +34,7 @@ export default async function EditBudgetPage({ params }: EditBudgetPageProps) {
              <BudgetForm
                 initialData={budget}
                 businessLines={businessLines}
-                costCenters={costCenters}
+                costCenters={costCenters} // Pass the CostCentersWithBusinessLines
                 onSubmit={updateAction}
                 formType="edit"
             />

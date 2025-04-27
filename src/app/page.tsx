@@ -1,16 +1,18 @@
-import { getBudgets, getBusinessLines, getCostCenters } from '@/app/actions';
+
+import { getBudgets, getBusinessLines, getCostCentersSimple } from '@/app/actions'; // Changed getCostCenters to getCostCentersSimple
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle } from 'lucide-react';
+import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2 } from 'lucide-react';
 import Link from 'next/link';
 import { BudgetCharts } from '@/components/charts/budget-charts';
 
 
 async function getDashboardData() {
+    // Use getCostCentersSimple to get the count
     const [budgets, businessLines, costCenters] = await Promise.all([
         getBudgets(),
         getBusinessLines(),
-        getCostCenters(),
+        getCostCentersSimple(), // Changed function call
     ]);
 
     const totalBudget = budgets.reduce((sum, budget) => sum + budget.amount, 0);
@@ -21,8 +23,8 @@ async function getDashboardData() {
     const chartData = budgets.map(b => ({
         amount: b.amount,
         type: b.type,
-        business_line_name: b.business_line_name,
-        cost_center_name: b.cost_center_name,
+        business_line_name: b.business_line_name ?? 'Unassigned BL', // Ensure names are not null
+        cost_center_name: b.cost_center_name ?? 'Unassigned CC',   // Ensure names are not null
     }));
 
 
@@ -32,7 +34,7 @@ async function getDashboardData() {
         totalOpex,
         budgetEntryCount: budgets.length,
         businessLineCount: businessLines.length,
-        costCenterCount: costCenters.length,
+        costCenterCount: costCenters.length, // Count based on simple list
         chartData, // Pass prepared chart data
     };
 }
@@ -126,6 +128,11 @@ export default async function DashboardPage() {
                              <PlusCircle className="mr-2 h-4 w-4" /> Add Budget Entry
                          </Button>
                       </Link>
+                       <Link href="/cost-center-associations" passHref>
+                         <Button variant="outline">
+                              <Link2 className="mr-2 h-4 w-4" /> Manage Associations
+                         </Button>
+                      </Link>
                       <Link href="/upload" passHref>
                          <Button variant="outline">
                              <Upload className="mr-2 h-4 w-4" /> Upload Spreadsheet
@@ -140,7 +147,7 @@ export default async function DashboardPage() {
              </Card>
 
             {/* Charts Section */}
-             {data.chartData.length > 0 && (
+             {data.chartData.length > 0 ? (
                 <Card>
                     <CardHeader>
                         <CardTitle>Budget Overview Charts</CardTitle>
@@ -150,6 +157,15 @@ export default async function DashboardPage() {
                         <BudgetCharts budgetData={data.chartData} />
                     </CardContent>
                 </Card>
+             ) : (
+                 <Card>
+                    <CardHeader>
+                        <CardTitle>Budget Overview Charts</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <p className="text-muted-foreground">No budget data available to display charts.</p>
+                    </CardContent>
+                 </Card>
              )}
 
         </div>
@@ -157,3 +173,4 @@ export default async function DashboardPage() {
 }
 
 export const dynamic = 'force-dynamic'; // Ensure data is fetched on every request
+

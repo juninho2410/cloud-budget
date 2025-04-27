@@ -4,7 +4,7 @@
 import type { Database } from 'sqlite';
 import { revalidatePath } from 'next/cache';
 import { getDb } from '@/lib/db';
-import type { BusinessLine, CostCenter, Budget, BudgetEntry } from '@/types';
+import type { BusinessLine, CostCenter, Budget, BudgetEntry, CostCenterWithBusinessLines } from '@/types';
 import * as XLSX from 'xlsx';
 import { z } from 'zod';
 
@@ -13,10 +13,25 @@ const BusinessLineSchema = z.object({
   name: z.string().min(1, { message: 'Business line name cannot be empty' }),
 });
 
+// Cost Center Schema - Updated (no business_line_id)
 const CostCenterSchema = z.object({
+  id: z.number().optional(), // For updates
   name: z.string().min(1, { message: 'Cost center name cannot be empty' }),
-  business_line_id: z.number().int().positive().nullable(), // Changed to number().int()
+  // business_line_id removed
 });
+
+// Schema for associating a single BL to a CC
+const AssociateBusinessLineSchema = z.object({
+    cost_center_id: z.number().int().positive(),
+    business_line_id: z.number().int().positive(),
+});
+
+// Schema for associating multiple BLs to a CC
+const AssociateMultipleBusinessLinesSchema = z.object({
+    cost_center_id: z.number().int().positive(),
+    business_line_ids: z.array(z.number().int().positive()).min(0), // Allow empty array to disassociate all
+});
+
 
 const BudgetSchema = z.object({
     id: z.number().optional(), // Optional for update
@@ -25,22 +40,18 @@ const BudgetSchema = z.object({
     year: z.number().int().min(1900).max(2100, 'Enter a valid year'),
     month: z.number().int().min(1).max(12, 'Enter a valid month (1-12)'),
     type: z.enum(['CAPEX', 'OPEX']),
-    business_line_id: z.number().int().positive().nullable(), // Changed to number().int()
-    cost_center_id: z.number().int().positive().nullable(), // Changed to number().int()
+    business_line_id: z.number().int().positive().nullable(), // Keep this for the budget line item itself
+    cost_center_id: z.number().int().positive().nullable(), // Keep this for the budget line item itself
 });
 
 
-// Updated Helper function for database operations
-// It now simply gets the DB connection and executes the operation.
-// Error handling (try/catch) should be done in the functions calling this helper.
 async function runDbOperation<T>(operation: (db: Database) => Promise<T>): Promise<T> {
-  const db = await getDb(); // getDb should handle its own errors or let them propagate
-  // No try...catch here, let errors propagate to the caller
+  const db = await getDb();
   return operation(db);
 }
 
 
-// --- Business Line Actions ---
+// --- Business Line Actions (Largely unchanged) ---
 
 export async function addBusinessLine(formData: FormData) {
   const name = formData.get('name') as string;
@@ -51,20 +62,18 @@ export async function addBusinessLine(formData: FormData) {
       await db.run('INSERT INTO business_lines (name) VALUES (?)', name);
     });
     revalidatePath('/business-lines');
-    revalidatePath('/budgets');
-    revalidatePath('/cost-centers'); // Adding revalidation for cost centers as they might be affected
+    revalidatePath('/cost-centers'); // For potential display changes
+    revalidatePath('/cost-center-associations'); // Revalidate new association page
     revalidatePath('/');
     return { success: true, message: 'Business line added successfully.' };
   } catch (error: any) {
      if (error instanceof z.ZodError) {
        return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
      }
-      // Catch specific database errors directly now
       if (error.message?.includes('UNIQUE constraint failed')) {
         return { success: false, message: `Business line "${name}" already exists.` };
       }
     console.error('Failed to add business line:', error);
-    // Generic fallback message
     return { success: false, message: `Failed to add business line. Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
   }
 }
@@ -76,7 +85,6 @@ export async function getBusinessLines(): Promise<BusinessLine[]> {
        });
    } catch (error: any) {
         console.error('Failed to get business lines:', error);
-        // Return empty array or throw error depending on desired behavior
         return [];
    }
 }
@@ -84,30 +92,28 @@ export async function getBusinessLines(): Promise<BusinessLine[]> {
 export async function updateBusinessLine(id: number, formData: FormData) {
     const name = formData.get('name') as string;
     try {
-      BusinessLineSchema.parse({ name });
+        BusinessLineSchema.parse({ name });
         await runDbOperation(async (db) => {
+            // Set updated_at explicitly to ensure trigger fires correctly if needed
+            // Or rely on the trigger if it handles all cases. Let's rely on the trigger for now.
             const result = await db.run('UPDATE business_lines SET name = ? WHERE id = ?', [name, id]);
-             if (result.changes === 0) {
-                 // Optionally throw an error if the ID didn't exist
-                 // throw new Error(`Business line with ID ${id} not found.`);
+            if (result.changes === 0) {
                  console.warn(`Attempted to update business line ID ${id}, but it was not found.`);
              }
         });
         revalidatePath('/business-lines');
-        revalidatePath('/budgets');
-        revalidatePath('/cost-centers'); // Adding revalidation for cost centers as they might be affected
+        revalidatePath('/cost-centers'); // For potential display changes
+        revalidatePath('/cost-center-associations'); // Revalidate new association page
         revalidatePath('/');
         return { success: true, message: 'Business line updated successfully.' };
     } catch (error: any) {
         if (error instanceof z.ZodError) {
             return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
         }
-        // Catch specific database errors directly now
         if (error.message?.includes('UNIQUE constraint failed')) {
             return { success: false, message: `Business line "${name}" already exists.` };
         }
         console.error(`Failed to update business line with ID ${id}:`, error);
-        // Generic fallback message
         return { success: false, message: `Failed to update business line (ID: ${id}). Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
     }
 }
@@ -116,117 +122,148 @@ export async function updateBusinessLine(id: number, formData: FormData) {
 export async function deleteBusinessLine(id: number) {
   try {
     await runDbOperation(async (db) => {
-      // Optionally, check if the business line is in use before deleting, or handle cascades
+      // The CASCADE constraint on cost_center_business_lines handles removing associations
        const result = await db.run('DELETE FROM business_lines WHERE id = ?', id);
         if (result.changes === 0) {
             console.warn(`Attempted to delete business line ID ${id}, but it was not found.`);
-            // Optionally return a specific message if ID not found
-             // return { success: false, message: `Business line with ID ${id} not found.` };
         }
+        // Also need to potentially update budgets linked to this BL (set to NULL) due to ON DELETE SET NULL
+        // This is handled by the FK constraint itself.
     });
     revalidatePath('/business-lines');
-    revalidatePath('/cost-centers'); // Cost centers might be affected
+    revalidatePath('/cost-centers'); // For potential display changes
+    revalidatePath('/cost-center-associations'); // Revalidate new association page
     revalidatePath('/budgets'); // Budgets might be affected
     revalidatePath('/');
     return { success: true, message: 'Business line deleted successfully.' };
   } catch (error: any) {
-    // Catch specific database errors, e.g., foreign key constraint if not using CASCADE
+     // Foreign key errors on budgets should be handled by SET NULL,
+     // but maybe other unexpected constraints exist.
      if (error.message?.includes('FOREIGN KEY constraint failed')) {
-          return { success: false, message: `Cannot delete business line (ID: ${id}) because it is still associated with cost centers or budgets.` };
+          return { success: false, message: `Cannot delete business line (ID: ${id}) due to an unexpected constraint.` };
      }
     console.error(`Failed to delete business line with ID ${id}:`, error);
     return { success: false, message: `Failed to delete business line (ID: ${id}). Reason: ${error.message || 'Unknown error'}.` };
   }
 }
 
-// --- Cost Center Actions ---
+// --- Cost Center Actions (Updated for M2M) ---
 
 export async function addCostCenter(formData: FormData) {
   const name = formData.get('name') as string;
-  const businessLineIdStr = formData.get('business_line_id') as string | null;
-  // Ensure null is passed if the string is empty or null, otherwise parse as integer
-  const business_line_id = businessLineIdStr ? parseInt(businessLineIdStr, 10) : null;
-
-   // Validate parsed ID is a number if not null
-   if (businessLineIdStr && isNaN(business_line_id as number)) {
-       return { success: false, message: 'Invalid Business Line ID provided.' };
-   }
-
 
   try {
-      const parsedData = CostCenterSchema.parse({ name, business_line_id });
+      // Use the updated schema without business_line_id
+      const parsedData = CostCenterSchema.omit({id: true}).parse({ name });
     await runDbOperation(async (db) => {
-      await db.run('INSERT INTO cost_centers (name, business_line_id) VALUES (?, ?)', [parsedData.name, parsedData.business_line_id]);
+      await db.run('INSERT INTO cost_centers (name) VALUES (?)', [parsedData.name]);
     });
     revalidatePath('/cost-centers');
-    revalidatePath('/budgets');
+    revalidatePath('/cost-center-associations'); // Revalidate new association page
+    revalidatePath('/budgets'); // Budgets might refer to CCs
     revalidatePath('/');
     return { success: true, message: 'Cost center added successfully.' };
   } catch (error: any) {
       if (error instanceof z.ZodError) {
             return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
         }
-      // Catch specific database errors directly
       if (error.message?.includes('UNIQUE constraint failed')) {
         return { success: false, message: `Cost center "${name}" already exists.` };
       }
-       if (error.message?.includes('FOREIGN KEY constraint failed')) {
-          return { success: false, message: `Invalid Business Line selected.` };
-       }
     console.error('Failed to add cost center:', error);
     return { success: false, message: `Failed to add cost center. Reason: ${error.message || 'Unknown error'}. Please check logs.` };
   }
 }
 
-export async function getCostCenters(): Promise<CostCenter[]> {
+// Get Cost Centers *without* their associated business lines initially
+export async function getCostCentersSimple(): Promise<CostCenter[]> {
    try {
        return await runDbOperation(async (db) => {
+           // Select basic cost center info
            return db.all(`
-             SELECT cc.id, cc.name, cc.business_line_id, bl.name as business_line_name
+             SELECT cc.id, cc.name, cc.created_at, cc.updated_at
              FROM cost_centers cc
-             LEFT JOIN business_lines bl ON cc.business_line_id = bl.id
              ORDER BY cc.name
            `);
        });
     } catch (error: any) {
-         console.error('Failed to get cost centers:', error);
+         console.error('Failed to get simple cost centers:', error);
          return [];
     }
 }
 
+// Get Cost Centers *with* their associated business lines (more complex query)
+export async function getCostCentersWithBusinessLines(): Promise<CostCenterWithBusinessLines[]> {
+   try {
+       return await runDbOperation(async (db) => {
+           // Fetch all cost centers
+           const costCenters = await db.all<CostCenter[]>(`
+             SELECT id, name, created_at, updated_at
+             FROM cost_centers
+             ORDER BY name
+           `);
+
+            if (!costCenters || costCenters.length === 0) {
+                return [];
+            }
+
+           // Fetch all associations
+           const associations = await db.all<{ cost_center_id: number; business_line_id: number; business_line_name: string }>(`
+             SELECT
+               ccbl.cost_center_id,
+               ccbl.business_line_id,
+               bl.name as business_line_name
+             FROM cost_center_business_lines ccbl
+             JOIN business_lines bl ON ccbl.business_line_id = bl.id
+           `);
+
+           // Create a map for efficient lookup
+           const associationsMap = new Map<number, { id: number; name: string }[]>();
+           associations.forEach(assoc => {
+               const currentAssociations = associationsMap.get(assoc.cost_center_id) || [];
+               currentAssociations.push({ id: assoc.business_line_id, name: assoc.business_line_name });
+               associationsMap.set(assoc.cost_center_id, currentAssociations);
+           });
+
+           // Combine the data
+           const results: CostCenterWithBusinessLines[] = costCenters.map(cc => ({
+               ...cc,
+               businessLines: associationsMap.get(cc.id) || [] // Get associated BLs or empty array
+           }));
+
+           return results;
+       });
+    } catch (error: any) {
+         console.error('Failed to get cost centers with business lines:', error);
+         return [];
+    }
+}
+
+
 export async function updateCostCenter(id: number, formData: FormData) {
     const name = formData.get('name') as string;
-    const businessLineIdStr = formData.get('business_line_id') as string | null;
-    const business_line_id = businessLineIdStr ? parseInt(businessLineIdStr, 10) : null;
-
-    // Validate parsed ID is a number if not null
-    if (businessLineIdStr && isNaN(business_line_id as number)) {
-        return { success: false, message: 'Invalid Business Line ID provided.' };
-    }
 
     try {
-        const parsedData = CostCenterSchema.parse({ name, business_line_id });
+        const parsedData = CostCenterSchema.parse({ id, name }); // Use full schema for update context
         await runDbOperation(async (db) => {
-             const result = await db.run('UPDATE cost_centers SET name = ?, business_line_id = ? WHERE id = ?', [parsedData.name, parsedData.business_line_id, id]);
+             // Update only the name, associations are handled separately
+             const result = await db.run('UPDATE cost_centers SET name = ? WHERE id = ?', [parsedData.name, id]);
              if (result.changes === 0) {
                  console.warn(`Attempted to update cost center ID ${id}, but it was not found.`);
              }
         });
         revalidatePath('/cost-centers');
-        revalidatePath('/budgets');
+        revalidatePath('/cost-center-associations'); // Revalidate new association page
+        revalidatePath('/budgets'); // Budgets might refer to CCs
         revalidatePath('/');
         return { success: true, message: 'Cost center updated successfully.' };
     } catch (error: any) {
         if (error instanceof z.ZodError) {
             return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
         }
-        // Catch specific database errors directly
         if (error.message?.includes('UNIQUE constraint failed')) {
             return { success: false, message: `Cost center "${name}" already exists.` };
         }
-         if (error.message?.includes('FOREIGN KEY constraint failed')) {
-            return { success: false, message: `Invalid Business Line selected.` };
-         }
         console.error(`Failed to update cost center with ID ${id}:`, error);
         return { success: false, message: `Failed to update cost center (ID: ${id}). Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
     }
@@ -235,26 +272,124 @@ export async function updateCostCenter(id: number, formData: FormData) {
 export async function deleteCostCenter(id: number) {
   try {
     await runDbOperation(async (db) => {
+       // CASCADE on cost_center_business_lines handles associations
        const result = await db.run('DELETE FROM cost_centers WHERE id = ?', id);
         if (result.changes === 0) {
              console.warn(`Attempted to delete cost center ID ${id}, but it was not found.`);
         }
+        // Budgets linked via FK with SET NULL will be updated automatically
     });
     revalidatePath('/cost-centers');
+    revalidatePath('/cost-center-associations'); // Revalidate new association page
     revalidatePath('/budgets'); // Budgets might be affected
     revalidatePath('/');
     return { success: true, message: 'Cost center deleted successfully.' };
   } catch (error: any) {
-     // Catch specific database errors
+      // FK errors on budgets should be handled by SET NULL
       if (error.message?.includes('FOREIGN KEY constraint failed')) {
-         return { success: false, message: `Cannot delete cost center (ID: ${id}) because it is still associated with budgets.` };
+         return { success: false, message: `Cannot delete cost center (ID: ${id}) due to an unexpected constraint.` };
       }
     console.error(`Failed to delete cost center with ID ${id}:`, error);
     return { success: false, message: `Failed to delete cost center (ID: ${id}). Reason: ${error.message || 'Unknown error'}.` };
   }
 }
 
-// --- Budget Actions ---
+// --- Cost Center <-> Business Line Association Actions (NEW) ---
+
+export async function associateBusinessLineToCostCenter(costCenterId: number, businessLineId: number) {
+    try {
+        AssociateBusinessLineSchema.parse({ cost_center_id: costCenterId, business_line_id: businessLineId });
+        await runDbOperation(async (db) => {
+            // Use INSERT OR IGNORE to avoid errors if the association already exists
+            await db.run(
+                'INSERT OR IGNORE INTO cost_center_business_lines (cost_center_id, business_line_id) VALUES (?, ?)',
+                [costCenterId, businessLineId]
+            );
+        });
+        revalidatePath('/cost-centers'); // Update display if needed
+        revalidatePath('/cost-center-associations');
+        return { success: true, message: 'Business line associated successfully.' };
+    } catch (error: any) {
+         if (error instanceof z.ZodError) {
+            return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
+        }
+        if (error.message?.includes('FOREIGN KEY constraint failed')) {
+            return { success: false, message: 'Invalid Cost Center or Business Line ID.' };
+        }
+        console.error(`Failed to associate BL ${businessLineId} to CC ${costCenterId}:`, error);
+        return { success: false, message: `Association failed. Reason: ${error.message || 'Unknown error'}.` };
+    }
+}
+
+export async function disassociateBusinessLineFromCostCenter(costCenterId: number, businessLineId: number) {
+    try {
+        AssociateBusinessLineSchema.parse({ cost_center_id: costCenterId, business_line_id: businessLineId });
+        await runDbOperation(async (db) => {
+            await db.run(
+                'DELETE FROM cost_center_business_lines WHERE cost_center_id = ? AND business_line_id = ?',
+                [costCenterId, businessLineId]
+            );
+        });
+        revalidatePath('/cost-centers');
+        revalidatePath('/cost-center-associations');
+        return { success: true, message: 'Business line disassociated successfully.' };
+    } catch (error: any) {
+         if (error instanceof z.ZodError) {
+            return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
+        }
+        // FK errors shouldn't occur on DELETE unless IDs are wrong
+        console.error(`Failed to disassociate BL ${businessLineId} from CC ${costCenterId}:`, error);
+        return { success: false, message: `Disassociation failed. Reason: ${error.message || 'Unknown error'}.` };
+    }
+}
+
+// Action to set *all* associations for a cost center at once
+export async function setCostCenterAssociations(costCenterId: number, businessLineIds: number[]) {
+     try {
+        AssociateMultipleBusinessLinesSchema.parse({ cost_center_id: costCenterId, business_line_ids: businessLineIds });
+        await runDbOperation(async (db) => {
+             // Use a transaction for atomicity
+            await db.run('BEGIN TRANSACTION');
+            try {
+                // 1. Remove all existing associations for this cost center
+                await db.run('DELETE FROM cost_center_business_lines WHERE cost_center_id = ?', costCenterId);
+
+                // 2. Insert the new associations
+                if (businessLineIds.length > 0) {
+                    const stmt = await db.prepare('INSERT INTO cost_center_business_lines (cost_center_id, business_line_id) VALUES (?, ?)');
+                    for (const blId of businessLineIds) {
+                        // Add OR IGNORE in case of duplicate IDs in input array, though validation should prevent this
+                        await stmt.run(costCenterId, blId);
+                    }
+                    await stmt.finalize();
+                }
+                await db.run('COMMIT');
+            } catch (innerError: any) {
+                await db.run('ROLLBACK');
+                console.error(`Transaction failed during setting associations for CC ${costCenterId}:`, innerError);
+                 // Re-throw the inner error to be caught by the outer catch block
+                 throw innerError;
+            }
+        });
+        revalidatePath('/cost-centers');
+        revalidatePath('/cost-center-associations');
+        return { success: true, message: 'Cost center associations updated successfully.' };
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+           return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
+       }
+        if (error.message?.includes('FOREIGN KEY constraint failed')) {
+           // This could happen if one of the businessLineIds is invalid
+           return { success: false, message: 'Update failed: One or more selected Business Lines do not exist.' };
+        }
+       console.error(`Failed to set associations for CC ${costCenterId}:`, error);
+       return { success: false, message: `Failed to update associations. Reason: ${error.message || 'Unknown error'}.` };
+    }
+}
+
+
+
+// --- Budget Actions (Largely unchanged, but spreadsheet needs adjustment) ---
 
 export async function addBudgetEntry(formData: FormData) {
     const businessLineIdStr = formData.get('business_line_id') as string | null;
@@ -265,13 +400,11 @@ export async function addBudgetEntry(formData: FormData) {
         amount: formData.get('amount') ? parseFloat(formData.get('amount') as string) : undefined,
         year: formData.get('year') ? parseInt(formData.get('year') as string, 10) : undefined,
         month: formData.get('month') ? parseInt(formData.get('month') as string, 10) : undefined,
-        type: formData.get('type') as 'CAPEX' | 'OPEX' | undefined, // Allow undefined initially
-        // Parse IDs only if they are not null/empty strings
+        type: formData.get('type') as 'CAPEX' | 'OPEX' | undefined,
         business_line_id: businessLineIdStr ? parseInt(businessLineIdStr, 10) : null,
         cost_center_id: costCenterIdStr ? parseInt(costCenterIdStr, 10) : null,
     };
 
-     // Validate parsed IDs are numbers if not null
      if (businessLineIdStr && isNaN(rawData.business_line_id as number)) {
        return { success: false, message: 'Invalid Business Line ID.' };
      }
@@ -281,7 +414,6 @@ export async function addBudgetEntry(formData: FormData) {
 
 
     try {
-        // Use .omit({ id: true }) as we are adding, not updating
         const validatedData = BudgetSchema.omit({ id: true }).parse(rawData);
         await runDbOperation(async (db) => {
         await db.run(
@@ -296,19 +428,14 @@ export async function addBudgetEntry(formData: FormData) {
          if (error instanceof z.ZodError) {
             return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
         }
-        // Catch specific database errors directly
          if (error.message?.includes('FOREIGN KEY constraint failed')) {
-             // Check which foreign key failed (more specific message)
-             if (rawData.business_line_id && rawData.cost_center_id) {
-                 // Add logic to check which one is invalid if possible
-                 return { success: false, message: 'Invalid Business Line or Cost Center selected.' };
-             } else if (rawData.business_line_id) {
-                  return { success: false, message: 'Invalid Business Line selected.' };
-             } else if (rawData.cost_center_id) {
-                  return { success: false, message: 'Invalid Cost Center selected.' };
-             } else {
-                 return { success: false, message: 'Invalid reference to Business Line or Cost Center.' }; // Fallback
+             if (rawData.business_line_id && !(await runDbOperation(db => db.get('SELECT 1 FROM business_lines WHERE id = ?', rawData.business_line_id)))) {
+                 return { success: false, message: 'Invalid Business Line selected.' };
              }
+             if (rawData.cost_center_id && !(await runDbOperation(db => db.get('SELECT 1 FROM cost_centers WHERE id = ?', rawData.cost_center_id)))) {
+                 return { success: false, message: 'Invalid Cost Center selected.' };
+             }
+             return { success: false, message: 'Invalid reference to Business Line or Cost Center.' };
          }
         console.error('Failed to add budget entry:', error);
         return { success: false, message: `Failed to add budget entry. Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
@@ -377,7 +504,6 @@ export async function updateBudgetEntry(id: number, formData: FormData) {
         cost_center_id: costCenterIdStr ? parseInt(costCenterIdStr, 10) : null,
     };
 
-    // Validate parsed IDs are numbers if not null
     if (businessLineIdStr && isNaN(rawData.business_line_id as number)) {
        return { success: false, message: 'Invalid Business Line ID.' };
      }
@@ -386,7 +512,6 @@ export async function updateBudgetEntry(id: number, formData: FormData) {
      }
 
   try {
-      // Use the full BudgetSchema for updates as ID is present
       const validatedData = BudgetSchema.parse(rawData);
       await runDbOperation(async (db) => {
          const result = await db.run(
@@ -398,26 +523,21 @@ export async function updateBudgetEntry(id: number, formData: FormData) {
          }
         });
         revalidatePath('/budgets');
-        revalidatePath(`/budgets/${id}/edit`); // Revalidate specific edit page
+        revalidatePath(`/budgets/${id}/edit`);
         revalidatePath('/');
         return { success: true, message: 'Budget entry updated successfully.' };
     } catch (error: any) {
          if (error instanceof z.ZodError) {
             return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
         }
-        // Catch specific database errors directly
         if (error.message?.includes('FOREIGN KEY constraint failed')) {
-             // Check which foreign key failed (more specific message)
-             if (rawData.business_line_id && rawData.cost_center_id) {
-                 // Add logic to check which one is invalid if possible
-                 return { success: false, message: 'Invalid Business Line or Cost Center selected.' };
-             } else if (rawData.business_line_id) {
-                  return { success: false, message: 'Invalid Business Line selected.' };
-             } else if (rawData.cost_center_id) {
-                  return { success: false, message: 'Invalid Cost Center selected.' };
-             } else {
-                 return { success: false, message: 'Invalid reference to Business Line or Cost Center.' }; // Fallback
+             if (rawData.business_line_id && !(await runDbOperation(db => db.get('SELECT 1 FROM business_lines WHERE id = ?', rawData.business_line_id)))) {
+                 return { success: false, message: 'Invalid Business Line selected.' };
              }
+             if (rawData.cost_center_id && !(await runDbOperation(db => db.get('SELECT 1 FROM cost_centers WHERE id = ?', rawData.cost_center_id)))) {
+                 return { success: false, message: 'Invalid Cost Center selected.' };
+             }
+             return { success: false, message: 'Invalid reference to Business Line or Cost Center.' };
          }
         console.error(`Failed to update budget entry with ID ${id}:`, error);
         return { success: false, message: `Failed to update budget entry (ID: ${id}). Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
@@ -437,13 +557,12 @@ export async function deleteBudgetEntry(id: number) {
     revalidatePath('/');
     return { success: true, message: 'Budget entry deleted successfully.' };
   } catch (error: any) {
-      // Specific FK error handling not needed here unless budgets block deletion of other tables
     console.error(`Failed to delete budget entry with ID ${id}:`, error);
     return { success: false, message: `Failed to delete budget entry (ID: ${id}). Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
   }
 }
 
-// --- Spreadsheet Upload Action ---
+// --- Spreadsheet Upload Action (Needs adjustment for association) ---
 
 export async function uploadSpreadsheet(formData: FormData): Promise<{ success: boolean; message: string }> {
     const file = formData.get('spreadsheet') as File;
@@ -457,52 +576,44 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
         const workbook = XLSX.read(bytes, { type: 'buffer' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        // Explicitly define header row if necessary, e.g., { header: 1 }
         const data = XLSX.utils.sheet_to_json<any>(worksheet);
 
-        // Use runDbOperation to ensure DB access is handled consistently
+        // Fetch existing BLs and CCs for validation
         const { businessLines, costCenters } = await runDbOperation(async (db) => {
            const businessLines = await db.all('SELECT id, lower(name) as name FROM business_lines');
-           const costCenters = await db.all('SELECT id, lower(name) as name, business_line_id FROM cost_centers');
+           const costCenters = await db.all('SELECT id, lower(name) as name FROM cost_centers');
+           // We don't need cost_center_business_lines here directly, validation happens during budget insertion
            return { businessLines, costCenters };
         });
 
-        // Create maps for quick lookup (case-insensitive)
         const businessLineMap = new Map(businessLines.map(bl => [bl.name, bl.id]));
         const costCenterMap = new Map(costCenters.map(cc => [cc.name, cc.id]));
-         // Map cost center name to its business line ID for validation
-        const costCenterBusinessLineMap = new Map(costCenters.map(cc => [cc.name, cc.business_line_id]));
 
         const budgetEntries: BudgetEntry[] = [];
         const errors: string[] = [];
-        const processedRows: any[] = []; // Track rows being processed
+        const processedRows: any[] = [];
 
         for (let i = 0; i < data.length; i++) {
             const row = data[i];
-            const rowNum = i + 2; // Assuming header is row 1, data starts row 2
-            const rowErrors: string[] = []; // Errors specific to this row
+            const rowNum = i + 2;
+            const rowErrors: string[] = [];
 
-            // Normalize column names (lowercase, trim) and handle potential undefined values
             const normalizedRow: { [key: string]: any } = {};
             for (const key in row) {
-                 // Only process own properties and non-empty keys
                 if (Object.prototype.hasOwnProperty.call(row, key) && key.trim()) {
                      normalizedRow[key.toLowerCase().trim()] = row[key];
                 }
             }
 
-             // Skip empty rows entirely
             if (Object.keys(normalizedRow).length === 0 || Object.values(normalizedRow).every(v => v === null || v === undefined || String(v).trim() === '')) {
                  console.log(`Skipping empty row ${rowNum}`);
-                 continue; // Skip to next iteration
+                 continue;
             }
 
-             processedRows.push(normalizedRow); // Add row for processing
+            processedRows.push(normalizedRow);
 
-
-            // --- Column Name Consistency Checks ---
             const expectedColumns = ['description', 'amount', 'year', 'month', 'type'];
-            const optionalColumns = ['business line', 'cost center'];
+            const optionalColumns = ['business line', 'cost center']; // Keep these for budget item assignment
             const actualColumns = Object.keys(normalizedRow);
 
             expectedColumns.forEach(col => {
@@ -511,84 +622,66 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
                 }
             });
 
-
-            // Extract and validate data (adjust column names as needed)
+            // Extract budget data
             const description = normalizedRow['description'];
             const amountStr = normalizedRow['amount'];
             const yearStr = normalizedRow['year'];
             const monthStr = normalizedRow['month'];
             const type = (normalizedRow['type'] as string)?.toUpperCase().trim();
-            const businessLineName = (normalizedRow['business line'] as string)?.toLowerCase().trim();
-            const costCenterName = (normalizedRow['cost center'] as string)?.toLowerCase().trim();
+            // Get the single BL and CC for this *budget line*
+            const budgetBusinessLineName = (normalizedRow['business line'] as string)?.toLowerCase().trim();
+            const budgetCostCenterName = (normalizedRow['cost center'] as string)?.toLowerCase().trim();
 
 
             // --- Basic Validation ---
             if (!description || typeof description !== 'string' || description.trim() === '') rowErrors.push(`Invalid or missing Description.`);
-
             const amount = parseFloat(amountStr);
             if (isNaN(amount) || amount <= 0) rowErrors.push(`Invalid or missing positive Amount (value: '${amountStr}').`);
-
             const year = parseInt(yearStr, 10);
              if (isNaN(year) || year < 1900 || year > 2100) rowErrors.push(`Invalid or missing Year (1900-2100, value: '${yearStr}').`);
-
             const month = parseInt(monthStr, 10);
             if (isNaN(month) || month < 1 || month > 12) rowErrors.push(`Invalid or missing Month (1-12, value: '${monthStr}').`);
-
             if (!type || (type !== 'CAPEX' && type !== 'OPEX')) rowErrors.push(`Invalid or missing Type (must be 'CAPEX' or 'OPEX', value: '${normalizedRow['type']}').`);
 
+            // --- Lookup IDs for Budget Line ---
+            let budgetBusinessLineId: number | null = null;
+            if (actualColumns.includes('business line') && budgetBusinessLineName) {
+                if (businessLineMap.has(budgetBusinessLineName)) {
+                    budgetBusinessLineId = businessLineMap.get(budgetBusinessLineName)!;
+                } else {
+                    rowErrors.push(`Budget's Business Line "${normalizedRow['business line']}" not found.`);
+                }
+            }
 
-             let businessLineId: number | null = null;
-             let costCenterId: number | null = null;
+            let budgetCostCenterId: number | null = null;
+            if (actualColumns.includes('cost center') && budgetCostCenterName) {
+                if (costCenterMap.has(budgetCostCenterName)) {
+                    budgetCostCenterId = costCenterMap.get(budgetCostCenterName)!;
+                } else {
+                    rowErrors.push(`Budget's Cost Center "${normalizedRow['cost center']}" not found.`);
+                }
+            }
 
-             // --- Business Line Lookup ---
-             // Only perform lookup if the column exists and has a non-empty value
-             if (actualColumns.includes('business line') && businessLineName) {
-                 if (businessLineMap.has(businessLineName)) {
-                     businessLineId = businessLineMap.get(businessLineName)!;
-                 } else {
-                     rowErrors.push(`Business Line "${normalizedRow['business line']}" not found.`);
-                 }
-             }
+            // --- Association Logic (Optional - Decide if spreadsheet drives CC<->BL association) ---
+            // If you want the spreadsheet to *also* manage the M2M associations,
+            // you'd need additional columns (e.g., "Associated Business Lines" with comma-separated names)
+            // and logic here to parse those names, find their IDs, and call setCostCenterAssociations.
+            // For now, we assume the spreadsheet only assigns a single BL/CC to the *budget item*.
 
-              // --- Cost Center Lookup & Validation ---
-             // Only perform lookup if the column exists and has a non-empty value
-              if (actualColumns.includes('cost center') && costCenterName) {
-                  if (costCenterMap.has(costCenterName)) {
-                      costCenterId = costCenterMap.get(costCenterName)!;
-                      // Validate Cost Center belongs to the specified Business Line (if both provided)
-                      if (businessLineId !== null) {
-                           const expectedBusinessLineId = costCenterBusinessLineMap.get(costCenterName);
-                           // Allow if cost center has no business line assigned OR if it matches the row's business line
-                           if (expectedBusinessLineId !== null && expectedBusinessLineId !== businessLineId) {
-                               const actualBLNameResult = businessLines.find(bl => bl.id === expectedBusinessLineId);
-                               const actualBLName = actualBLNameResult ? `"${actualBLNameResult.name}"` : 'an unassigned Business Line'; // Handle case where BL name might not be found (shouldn't happen ideally)
-                               const providedBLName = normalizedRow['business line'] || 'the provided Business Line';
-                               rowErrors.push(`Cost Center "${normalizedRow['cost center']}" belongs to ${actualBLName}, not ${providedBLName}.`);
-                           }
-                      }
-                  } else {
-                      rowErrors.push(`Cost Center "${normalizedRow['cost center']}" not found.`);
-                  }
-             }
-
-
-             // If errors occurred for this row, add them to the main errors list with row number
-             if (rowErrors.length > 0) {
-                 errors.push(`Row ${rowNum}: ${rowErrors.join('; ')}`);
-             } else {
-                // If no errors for this row, try creating the budget entry object
-                 try {
+            if (rowErrors.length > 0) {
+                errors.push(`Row ${rowNum}: ${rowErrors.join('; ')}`);
+            } else {
+                try {
                      const budgetEntry: BudgetEntry = {
                          description: description.trim(),
                          amount: amount,
                          year: year,
                          month: month,
-                         type: type as 'CAPEX' | 'OPEX', // Type assertion safe here due to prior validation
-                         business_line_id: businessLineId,
-                         cost_center_id: costCenterId,
+                         type: type as 'CAPEX' | 'OPEX',
+                         business_line_id: budgetBusinessLineId, // Assign the looked-up ID
+                         cost_center_id: budgetCostCenterId,   // Assign the looked-up ID
                      };
-                     // Validate with Zod before adding to the list
-                     BudgetSchema.omit({ id: true }).parse(budgetEntry);
+                     BudgetSchema.omit({ id: true }).parse(budgetEntry); // Validate before adding
                      budgetEntries.push(budgetEntry);
                  } catch (zodError: any) {
                       if (zodError instanceof z.ZodError) {
@@ -598,17 +691,13 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
                      }
                  }
             }
-
-        } // End of row loop
-
+        } // End row loop
 
         if (errors.length > 0) {
             console.error("Spreadsheet Errors:", errors);
             return { success: false, message: `Spreadsheet contains errors:\n- ${errors.join('\n- ')}\nPlease fix and re-upload.` };
         }
 
-
-         // --- Check if any valid rows were processed ---
         if (budgetEntries.length === 0) {
              if (processedRows.length === 0) {
                  return { success: false, message: 'Spreadsheet is empty or contains no processable data rows.' };
@@ -617,9 +706,7 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
              }
         }
 
-
         // --- Database Insertion (Transaction) ---
-        // Use runDbOperation for transaction handling
         await runDbOperation(async (db) => {
              await db.run('BEGIN TRANSACTION');
              try {
@@ -634,8 +721,7 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
              } catch (dbError: any) {
                  await db.run('ROLLBACK');
                  console.error('Database insertion error during spreadsheet upload:', dbError);
-                  // Re-throw the specific error to be caught by the outer try/catch
-                 throw dbError;
+                 throw dbError; // Re-throw to outer catch
              }
          });
 
@@ -645,21 +731,19 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
 
     } catch (error: any) {
         console.error('Error processing spreadsheet:', error);
-         // Check for specific XLSX parsing errors if possible
          if (error.message?.includes('File is not a zip file')) {
             return { success: false, message: 'Failed to process spreadsheet: The file is corrupted or not a valid XLSX format.' };
          }
-         // Handle database errors caught during transaction
-         let userMessage = 'Failed to process spreadsheet file.';
-          if (error.message?.includes('UNIQUE constraint failed')) {
-              userMessage = 'Error inserting data: Duplicate entry found.';
+        let userMessage = 'Failed to process spreadsheet file.';
+          if (error.message?.includes('UNIQUE constraint failed')) { // Should not happen with budgets unless description+date+etc. is unique?
+              userMessage = 'Error inserting data: Duplicate budget entry found.';
           } else if (error.message?.includes('FOREIGN KEY constraint failed')) {
               userMessage = 'Error inserting data: Check if Business Lines or Cost Centers referenced in the sheet exist.';
           } else {
-             userMessage += ` Ensure it is a valid Excel (.xlsx) file.`;
+             userMessage += ` Reason: ${error.message || 'Unknown error'}. Ensure it is a valid Excel (.xlsx) file.`;
           }
 
-        return { success: false, message: `${userMessage} Reason: ${error.message}` };
+        return { success: false, message: userMessage };
     }
 }
 
@@ -669,20 +753,20 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
 export async function getBudgetDataForCharts() {
    try {
        return await runDbOperation(async (db) => {
-           // Fetch data needed for charts
-           // Consider filtering or aggregating here if datasets become large
            return db.all(`
-         SELECT
-           b.amount, b.type,
-           COALESCE(bl.name, 'Unassigned') as business_line_name,
-           COALESCE(cc.name, 'Unassigned') as cost_center_name
-         FROM budgets b
-         LEFT JOIN business_lines bl ON b.business_line_id = bl.id
-         LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id
-       `);
+             SELECT
+               b.amount, b.type,
+               COALESCE(bl.name, 'Unassigned BL') as business_line_name, -- Name for the budget's linked BL
+               COALESCE(cc.name, 'Unassigned CC') as cost_center_name   -- Name for the budget's linked CC
+             FROM budgets b
+             LEFT JOIN business_lines bl ON b.business_line_id = bl.id
+             LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id
+           `);
+           // Note: This chart data doesn't reflect the M2M CC<->BL relationship directly.
+           // Charting based on *all* BLs associated with a budget's CC would require more complex joins/logic.
        });
     } catch (error: any) {
        console.error('Failed to get chart data:', error);
-       return []; // Return empty array on error
+       return [];
     }
 }

@@ -1,21 +1,22 @@
+
 "use client";
 
 import * as React from 'react';
-import type { CostCenter, BusinessLine } from '@/types';
+import type { CostCenter, BusinessLine } from '@/types'; // Import basic types
 import { Button } from '@/components/ui/button';
 import { Pencil, Trash2 } from 'lucide-react';
 import { deleteCostCenter, updateCostCenter } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { ConfirmDialog } from '@/components/confirm-dialog';
-import { CostCenterForm } from './cost-center-form';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { CostCenterForm } from './cost-center-form'; // Form is simpler now
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge'; // Keep Badge if needed elsewhere, but not for CC list items
 
 interface CostCenterListProps {
-  costCenters: CostCenter[];
-  businessLines: BusinessLine[]; // Needed for the edit form
+  costCenters: CostCenter[]; // Expecting the simple list
+  businessLines: BusinessLine[]; // Still needed for the edit form (though form doesn't use it directly)
 }
 
 export function CostCenterList({ costCenters, businessLines }: CostCenterListProps) {
@@ -43,20 +44,28 @@ export function CostCenterList({ costCenters, businessLines }: CostCenterListPro
 
    const handleUpdateSubmit = async (formData: FormData) => {
         if (!editingCenter) return { success: false, message: 'No cost center selected for editing.' };
+        // updateCostCenter action now only takes id and formData (name)
         const result = await updateCostCenter(editingCenter.id, formData);
         if (result.success) {
             setIsEditDialogOpen(false);
              setEditingCenter(null);
              router.refresh();
         }
+        // Toast is handled within the form now
         return result;
+    };
+
+   // Function to close the dialog and reset editing state
+    const handleCloseDialog = () => {
+        setIsEditDialogOpen(false);
+        setEditingCenter(null);
     };
 
   return (
      <Card>
          <CardHeader>
              <CardTitle>Manage Cost Centers</CardTitle>
-             <CardDescription>Edit or delete existing cost centers.</CardDescription>
+             <CardDescription>Edit or delete existing cost centers. Associations are managed separately.</CardDescription>
          </CardHeader>
          <CardContent>
              {costCenters.length === 0 ? (
@@ -64,15 +73,13 @@ export function CostCenterList({ costCenters, businessLines }: CostCenterListPro
             ) : (
                  <ul className="space-y-2">
                     {costCenters.map((center) => (
-                        <li key={center.id} className="flex items-center justify-between p-2 border rounded-md">
+                        <li key={center.id} className="flex items-center justify-between p-2 border rounded-md hover:bg-muted/50 transition-colors">
                              <div>
                                 <span className="font-medium">{center.name}</span>
-                                {center.business_line_name && (
-                                     <Badge variant="outline" className="ml-2">{center.business_line_name}</Badge>
-                                )}
+                                {/* Badge for Business Line Name removed as it's not directly linked here */}
                             </div>
-                            <div className="space-x-2">
-                                 <Button variant="ghost" size="icon" aria-label="Edit Cost Center" onClick={() => handleEdit(center)}>
+                            <div className="space-x-1">
+                                 <Button variant="ghost" size="icon" aria-label="Edit Cost Center Name" onClick={() => handleEdit(center)}>
                                     <Pencil className="h-4 w-4" />
                                 </Button>
                                 <ConfirmDialog
@@ -81,8 +88,8 @@ export function CostCenterList({ costCenters, businessLines }: CostCenterListPro
                                             <Trash2 className="h-4 w-4" />
                                         </Button>
                                     }
-                                    title="Are you sure?"
-                                    description={`This action cannot be undone. This will permanently delete the cost center "${center.name}" and potentially affect associated Budgets.`}
+                                    title={`Delete "${center.name}"?`}
+                                    description={`This action cannot be undone. This will permanently delete the cost center "${center.name}", remove all its associations with business lines, and potentially affect associated Budgets (setting their cost center to null).`}
                                     confirmText="Delete"
                                     onConfirm={() => handleDelete(center.id, center.name)}
                                     confirmVariant='destructive'
@@ -92,18 +99,20 @@ export function CostCenterList({ costCenters, businessLines }: CostCenterListPro
                     ))}
                 </ul>
             )}
-             {/* Edit Dialog */}
+             {/* Edit Dialog - Only for Name */}
             <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Edit Cost Center</DialogTitle>
+                        <DialogTitle>Edit Cost Center Name</DialogTitle>
+                         <DialogDescription>Update the name for this cost center.</DialogDescription>
                     </DialogHeader>
                     {editingCenter && (
                         <CostCenterForm
                             initialData={editingCenter}
-                            businessLines={businessLines}
+                            // businessLines prop no longer needed by the form itself
                             onSubmit={handleUpdateSubmit}
-                            onCancel={() => setIsEditDialogOpen(false)}
+                            onCancel={handleCloseDialog}
+                            submitButtonText="Update Name"
                         />
                     )}
                 </DialogContent>

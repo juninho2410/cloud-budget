@@ -1,36 +1,32 @@
 
 "use client";
 
-import type { CostCenter, BusinessLine } from '@/types';
+import type { CostCenter } from '@/types'; // Import basic CostCenter type
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from '@/hooks/use-toast';
-import type { FormEvent } from 'react';
+import { useEffect } from 'react'; // Import useEffect
 
-
+// Schema only needs name now
 const costCenterSchema = z.object({
     name: z.string().min(1, 'Cost center name cannot be empty'),
-    business_line_id: z.string().nullable().optional(), // Stored as string from select, can be null
+    // business_line_id removed
 });
 
-const NONE_VALUE = "__NONE__"; // Special value for representing null in Select
-
 interface CostCenterFormProps {
-    initialData?: CostCenter | null;
-    businessLines: BusinessLine[];
+    initialData?: CostCenter | null; // Use basic CostCenter type
     onSubmit: (formData: FormData) => Promise<{ success: boolean; message: string }>;
     onCancel?: () => void;
     submitButtonText?: string;
+    // businessLines prop removed
 }
 
 export function CostCenterForm({
     initialData,
-    businessLines,
     onSubmit,
     onCancel,
     submitButtonText = initialData ? 'Update Cost Center' : 'Add Cost Center'
@@ -40,20 +36,23 @@ export function CostCenterForm({
         resolver: zodResolver(costCenterSchema),
         defaultValues: {
             name: initialData?.name || '',
-            business_line_id: initialData?.business_line_id ? String(initialData.business_line_id) : null,
+            // business_line_id removed
         },
     });
 
     const { formState, handleSubmit, control, reset } = form;
     const { isSubmitting } = formState;
 
+    // Reset form when initialData changes (for edit dialog)
+    useEffect(() => {
+        reset({ name: initialData?.name || '' });
+    }, [initialData, reset]);
+
 
     const handleFormSubmit = async (data: z.infer<typeof costCenterSchema>) => {
         const formData = new FormData();
         formData.append('name', data.name);
-        if (data.business_line_id) {
-           formData.append('business_line_id', data.business_line_id);
-        }
+        // No business_line_id to append
 
         const result = await onSubmit(formData);
 
@@ -64,8 +63,11 @@ export function CostCenterForm({
         });
 
          if (result.success) {
-            reset({ name: '', business_line_id: null }); // Reset form
-            onCancel?.(); // Close dialog/modal if needed
+            // Reset form on successful add, call cancel for edit/dialog close
+            if (!initialData) {
+              reset({ name: '' });
+            }
+            onCancel?.();
         }
     };
 
@@ -87,34 +89,7 @@ export function CostCenterForm({
                     )}
                 />
 
-                 <FormField
-                    control={control}
-                    name="business_line_id"
-                    render={({ field }) => (
-                         <FormItem>
-                             <FormLabel>Business Line (Optional)</FormLabel>
-                             <Select
-                                onValueChange={(value) => field.onChange(value === NONE_VALUE ? null : value)}
-                                value={field.value ?? NONE_VALUE}
-                             >
-                                <FormControl>
-                                    <SelectTrigger>
-                                         <SelectValue placeholder="Assign to Business Line" />
-                                    </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                     <SelectItem value={NONE_VALUE}>-- None --</SelectItem>
-                                     {businessLines.map((line) => (
-                                         <SelectItem key={line.id} value={String(line.id)}>
-                                             {line.name}
-                                         </SelectItem>
-                                     ))}
-                                </SelectContent>
-                             </Select>
-                            <FormMessage />
-                         </FormItem>
-                    )}
-                 />
+                 {/* Business Line Select Field Removed */}
 
                  <div className="flex justify-end space-x-2">
                    {onCancel && (
@@ -130,4 +105,3 @@ export function CostCenterForm({
         </Form>
     );
 }
-

@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -10,6 +11,7 @@ import {
   Target,
   Upload,
   BarChart3,
+  Link2, // Icon for associations
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -28,6 +30,7 @@ const menuItems = [
   { href: "/budgets", label: "Budgets", icon: Sheet },
   { href: "/business-lines", label: "Business Lines", icon: Building2 },
   { href: "/cost-centers", label: "Cost Centers", icon: Target },
+  { href: "/cost-center-associations", label: "Associations", icon: Link2 }, // New Item
   { href: "/upload", label: "Upload Spreadsheet", icon: Upload },
   { href: "/charts", label: "Charts", icon: BarChart3 },
 ];

@@ -1,7 +1,7 @@
 
 "use client";
 
-import type { Budget, BusinessLine, CostCenter, BudgetFormData } from '@/types';
+import type { Budget, BusinessLine, CostCenter, BudgetFormData, CostCenterWithBusinessLines } from '@/types'; // Import CostCenterWithBusinessLines
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -12,13 +12,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from '@/hooks/use-toast';
-import { useRouter } from 'next/navigation'; // Correct import for App Router
-import type { FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
+import { useMemo } from 'react'; // Import useMemo
 
 const budgetFormSchema = z.object({
     description: z.string().min(1, 'Description cannot be empty'),
     amount: z.preprocess(
-        (val) => (val === '' || val === null || val === undefined ? undefined : typeof val === 'string' ? parseFloat(val) : val),
+        (val) => (val === '' || val === null || val === undefined ? undefined : typeof val === 'string' ? parseFloat(val.replace(/,/g, '')) : val), // Handle potential commas
         z.number({ required_error: "Amount is required", invalid_type_error: "Amount must be a number" }).positive('Amount must be a positive number')
     ),
     year: z.preprocess(
@@ -40,7 +40,7 @@ const NONE_VALUE = "__NONE__"; // Special value for representing null in Select
 interface BudgetFormProps {
     initialData?: Budget | null;
     businessLines: BusinessLine[];
-    costCenters: CostCenter[];
+    costCenters: CostCenterWithBusinessLines[]; // Expect CostCenters with associated business lines
     onSubmit: (formData: FormData) => Promise<{ success: boolean; message: string }>;
     formType: 'add' | 'edit';
 }
@@ -53,10 +53,10 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
         resolver: zodResolver(budgetFormSchema),
         defaultValues: {
             description: initialData?.description || '',
-            amount: initialData?.amount ? String(initialData.amount) : '', // Initialize as string or empty string
-            year: initialData?.year ? String(initialData.year) : '',       // Initialize as string or empty string
-            month: initialData?.month ? String(initialData.month) : '',     // Initialize as string or empty string
-            type: initialData?.type || undefined, // Let zod handle the required error if undefined
+            amount: initialData?.amount ? String(initialData.amount) : '',
+            year: initialData?.year ? String(initialData.year) : '',
+            month: initialData?.month ? String(initialData.month) : '',
+            type: initialData?.type || undefined,
             business_line_id: initialData?.business_line_id ? String(initialData.business_line_id) : NONE_VALUE,
             cost_center_id: initialData?.cost_center_id ? String(initialData.cost_center_id) : NONE_VALUE,
         },
@@ -65,18 +65,25 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
     const { formState, handleSubmit, control, watch } = form;
     const { isSubmitting } = formState;
 
-    // Filter cost centers based on the selected business line
+    // Filter cost centers based on the selected business line using M2M relationship
     const selectedBusinessLineId = watch('business_line_id');
-    const filteredCostCenters = selectedBusinessLineId && selectedBusinessLineId !== NONE_VALUE
-        ? costCenters.filter(cc => cc.business_line_id === parseInt(selectedBusinessLineId, 10) || cc.business_line_id === null) // Also include CCs with no BL
-        : costCenters; // Show all if no BL is selected
+    const filteredCostCenters = useMemo(() => {
+        if (!selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE) {
+            // If no business line is selected, show all cost centers
+            return costCenters;
+        }
+        const targetBlId = parseInt(selectedBusinessLineId, 10);
+        // Filter cost centers that have the selected business line in their associations
+        return costCenters.filter(cc => cc.businessLines.some(bl => bl.id === targetBlId));
+    }, [selectedBusinessLineId, costCenters]);
 
 
     const handleFormSubmit = async (data: z.infer<typeof budgetFormSchema>) => {
 
         const formData = new FormData();
         formData.append('description', data.description);
-        formData.append('amount', String(data.amount));
+        // Ensure amount is sent without formatting issues if needed
+        formData.append('amount', String(data.amount)); // Convert back to string for FormData
         formData.append('year', String(data.year));
         formData.append('month', String(data.month));
         formData.append('type', data.type);
@@ -97,8 +104,8 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
         });
 
         if (result.success) {
-            router.push('/budgets'); // Redirect after successful submission
-            router.refresh(); // Ensure data is fresh
+            router.push('/budgets');
+            router.refresh();
         }
     };
 
@@ -132,7 +139,6 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                <FormItem>
                                  <FormLabel>Amount</FormLabel>
                                  <FormControl>
-                                   {/* Ensure value is always a string */}
                                    <Input type="number" step="0.01" placeholder="1000.00" {...field} value={field.value ?? ''} />
                                  </FormControl>
                                  <FormMessage />
@@ -170,7 +176,6 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                     <FormItem>
                                         <FormLabel>Year</FormLabel>
                                         <FormControl>
-                                             {/* Ensure value is always a string */}
                                             <Input type="number" placeholder="YYYY" {...field} value={field.value ?? ''} />
                                         </FormControl>
                                         <FormMessage />
@@ -184,7 +189,6 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                     <FormItem>
                                         <FormLabel>Month</FormLabel>
                                          <FormControl>
-                                            {/* Ensure value is always a string */}
                                             <Input type="number" placeholder="MM" {...field} value={field.value ?? ''} />
                                         </FormControl>
                                         <FormMessage />
@@ -199,10 +203,10 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                              name="business_line_id"
                              render={({ field }) => (
                                <FormItem>
-                                 <FormLabel>Business Line (Optional)</FormLabel>
+                                 <FormLabel>Business Line</FormLabel> {/* No longer optional */}
                                  <Select
                                     onValueChange={(value) => field.onChange(value)}
-                                    value={field.value ?? NONE_VALUE} // Use NONE_VALUE if null/undefined
+                                    value={field.value ?? NONE_VALUE}
                                   >
                                    <FormControl>
                                      <SelectTrigger>
@@ -218,7 +222,7 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                      ))}
                                    </SelectContent>
                                  </Select>
-                                 <FormMessage />
+                                  <FormMessage /> {/* Add message for required field */}
                                </FormItem>
                              )}
                            />
@@ -227,12 +231,12 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                 name="cost_center_id"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Cost Center (Optional)</FormLabel>
+                                        <FormLabel>Cost Center</FormLabel> {/* No longer optional */}
                                          <Select
                                             onValueChange={(value) => field.onChange(value)}
-                                            value={field.value ?? NONE_VALUE} // Use NONE_VALUE if null/undefined
+                                            value={field.value ?? NONE_VALUE}
                                             // Disable if no BL selected OR if BL selected but no matching CCs
-                                            disabled={(!selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE) || filteredCostCenters.length === 0}
+                                            disabled={!selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE || filteredCostCenters.length === 0}
                                             >
                                             <FormControl>
                                                 <SelectTrigger>
@@ -244,15 +248,19 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                                 {filteredCostCenters.map((center) => (
                                                     <SelectItem key={center.id} value={String(center.id)}>
                                                         {center.name}
-                                                        {center.business_line_name && ` (${center.business_line_name})`}
+                                                        {/* Displaying associated BLs in dropdown might be too much? Keep it simple */}
+                                                        {/* {center.businessLines.length > 0 && ` (${center.businessLines.map(bl=>bl.name).join(', ')})`} */}
                                                     </SelectItem>
                                                 ))}
                                                  {filteredCostCenters.length === 0 && selectedBusinessLineId && selectedBusinessLineId !== NONE_VALUE && (
-                                                      <p className="p-2 text-xs text-muted-foreground">No cost centers found for the selected business line.</p>
+                                                      <p className="p-2 text-xs text-muted-foreground">No cost centers associated with the selected business line.</p>
+                                                )}
+                                                {!selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE && (
+                                                      <p className="p-2 text-xs text-muted-foreground">Select a Business Line first.</p>
                                                 )}
                                             </SelectContent>
                                         </Select>
-                                        <FormMessage />
+                                        <FormMessage /> {/* Add message for required field */}
                                     </FormItem>
                                 )}
                             />
