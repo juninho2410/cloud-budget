@@ -6,7 +6,7 @@ import { open } from 'sqlite'; // Import open directly
 import sqlite3 from 'sqlite3'; // Import sqlite3 driver
 import { revalidatePath } from 'next/cache';
 import { getDb } from '@/lib/db';
-import type { BusinessLine, CostCenter, Budget, BudgetEntry, CostCenterWithBusinessLines } from '@/types';
+import type { BusinessLine, CostCenter, Budget, BudgetEntry, CostCenterWithBusinessLines, BudgetChartItem } from '@/types';
 import * as XLSX from 'xlsx';
 import { z } from 'zod';
 
@@ -393,6 +393,7 @@ export async function setCostCenterAssociations(costCenterId: number, businessLi
         });
         revalidatePath('/cost-centers');
         revalidatePath('/cost-center-associations');
+        revalidatePath('/budgets'); // Budget form filters may depend on this
         return { success: true, message: 'Cost center associations updated successfully.' };
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -444,6 +445,7 @@ export async function addBudgetEntry(formData: FormData) {
         });
         revalidatePath('/budgets');
         revalidatePath('/');
+        revalidatePath('/charts'); // Revalidate charts page
         return { success: true, message: 'Budget entry added successfully.' };
     } catch (error: any) {
          if (error instanceof z.ZodError) {
@@ -547,6 +549,7 @@ export async function updateBudgetEntry(id: number, formData: FormData) {
         revalidatePath('/budgets');
         revalidatePath(`/budgets/${id}/edit`);
         revalidatePath('/');
+        revalidatePath('/charts'); // Revalidate charts page
         return { success: true, message: 'Budget entry updated successfully.' };
     } catch (error: any) {
          if (error instanceof z.ZodError) {
@@ -577,6 +580,7 @@ export async function deleteBudgetEntry(id: number) {
     });
     revalidatePath('/budgets');
     revalidatePath('/');
+    revalidatePath('/charts'); // Revalidate charts page
     return { success: true, message: 'Budget entry deleted successfully.' };
   } catch (error: any) {
     console.error(`Failed to delete budget entry with ID ${id}:`, error);
@@ -742,6 +746,7 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
 
         revalidatePath('/budgets');
         revalidatePath('/');
+        revalidatePath('/charts'); // Revalidate charts page
         return { success: true, message: `Successfully imported ${budgetEntries.length} budget entries.` };
 
     } catch (error: any) {
@@ -765,20 +770,19 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
 
 // --- Chart Data Actions ---
 
-export async function getBudgetDataForCharts() {
+// Fetch data specifically for charts, including year and month
+export async function getBudgetDataForCharts(): Promise<BudgetChartItem[]> {
    try {
        return await runDbOperation(async (db) => {
            return db.all(`
              SELECT
-               b.amount, b.type,
+               b.amount, b.type, b.year, b.month,
                COALESCE(bl.name, 'Unassigned BL') as business_line_name, -- Name for the budget's linked BL
                COALESCE(cc.name, 'Unassigned CC') as cost_center_name   -- Name for the budget's linked CC
              FROM budgets b
              LEFT JOIN business_lines bl ON b.business_line_id = bl.id
              LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id
            `);
-           // Note: This chart data doesn't reflect the M2M CC<->BL relationship directly.
-           // Charting based on *all* BLs associated with a budget's CC would require more complex joins/logic.
        });
     } catch (error: any) {
        console.error('Failed to get chart data:', error);

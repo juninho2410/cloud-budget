@@ -1,32 +1,28 @@
 
-import { getBudgets, getBusinessLines, getCostCentersSimple } from '@/app/actions'; // Changed getCostCenters to getCostCentersSimple
+import { getBudgets, getBusinessLines, getCostCentersSimple, getBudgetDataForCharts } from '@/app/actions'; // Changed getCostCenters to getCostCentersSimple, Added getBudgetDataForCharts
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2 } from 'lucide-react';
 import Link from 'next/link';
 import { BudgetCharts } from '@/components/charts/budget-charts';
+import type { BudgetChartItem } from '@/types'; // Import BudgetChartItem
 
 
 async function getDashboardData() {
     // Use getCostCentersSimple to get the count
-    const [budgets, businessLines, costCenters] = await Promise.all([
+    const [budgets, businessLines, costCenters, chartRawData] = await Promise.all([
         getBudgets(),
         getBusinessLines(),
         getCostCentersSimple(), // Changed function call
+        getBudgetDataForCharts(), // Fetch raw chart data
     ]);
 
     const totalBudget = budgets.reduce((sum, budget) => sum + budget.amount, 0);
     const totalCapex = budgets.filter(b => b.type === 'CAPEX').reduce((sum, b) => sum + b.amount, 0);
     const totalOpex = budgets.filter(b => b.type === 'OPEX').reduce((sum, b) => sum + b.amount, 0);
 
-    // Prepare limited data for charts on dashboard (same structure as needed by BudgetCharts)
-    const chartData = budgets.map(b => ({
-        amount: b.amount,
-        type: b.type,
-        business_line_name: b.business_line_name ?? 'Unassigned BL', // Ensure names are not null
-        cost_center_name: b.cost_center_name ?? 'Unassigned CC',   // Ensure names are not null
-    }));
-
+    // Prepare chart data (already fetched as chartRawData which matches BudgetChartItem structure)
+    const chartData: BudgetChartItem[] = chartRawData;
 
     return {
         totalBudget,
@@ -154,6 +150,7 @@ export default async function DashboardPage() {
                         <CardDescription>Visual breakdown of your spending.</CardDescription>
                     </CardHeader>
                     <CardContent>
+                        {/* Pass the BudgetChartItem[] data */}
                         <BudgetCharts budgetData={data.chartData} />
                     </CardContent>
                 </Card>
@@ -173,4 +170,3 @@ export default async function DashboardPage() {
 }
 
 export const dynamic = 'force-dynamic'; // Ensure data is fetched on every request
-

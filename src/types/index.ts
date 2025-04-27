@@ -49,16 +49,27 @@ export interface BudgetFormData extends Omit<Budget, 'id' | 'created_at' | 'upda
 
 export type BudgetData = Budget[];
 
-// --- Chart Data Types (Remain the same, based on Budget info) ---
+// --- Chart Data Types ---
+
+// Type for raw data fetched for charting (includes time info)
+export type BudgetChartItem = Pick<Budget, 'amount' | 'type' | 'year' | 'month' | 'business_line_name' | 'cost_center_name'>;
+
+
+// Aggregated data for simple pie/bar charts
 export type ChartData = {
   name: string; // e.g., Business Line Name, Cost Center Name, Type (CAPEX/OPEX)
   value: number; // e.g., Total amount
 }[];
 
+// Aggregated data grouped by type (CAPEX/OPEX) for stacked/grouped charts
 export type GroupedChartData = {
-  name: string; // e.g., Business Line Name
+  name: string; // e.g., Business Line Name, Month-Year
   CAPEX: number;
   OPEX: number;
 }[];
 
-```
+// Data formatted for time series charts (e.g., Line chart)
+export type TimeSeriesChartData = {
+    monthYear: string; // e.g., "2023-01"
+    [key: string]: number | string; // Allows dynamic keys for business lines or other categories
+}[];
