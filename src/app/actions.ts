@@ -109,7 +109,7 @@ export async function updateBusinessLine(id: number, formData: FormData) {
         BusinessLineSchema.parse({ name });
         await runDbOperation(async (db) => {
             // Trigger will handle updated_at
-            const result = await db.run('UPDATE business_lines SET name = ? WHERE id = ?', [name, id]);
+            const result = await db.run('UPDATE business_lines SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [name, id]);
             if (result.changes === 0) {
                  console.warn(`Attempted to update business line ID ${id}, but it was not found.`);
                  // Optionally throw an error or return a specific message
@@ -130,9 +130,9 @@ export async function updateBusinessLine(id: number, formData: FormData) {
         }
         console.error(`Failed to update business line with ID ${id}:`, error);
         // Check if the error message indicates a missing column (like updated_at)
-        if (error.message?.includes('no such column: updated_at')) {
-            return { success: false, message: `Failed to update business line (ID: ${id}). Reason: Database schema issue (missing updated_at column). Please check migration status.` };
-        }
+        // if (error.message?.includes('no such column: updated_at')) {
+        //     return { success: false, message: `Failed to update business line (ID: ${id}). Reason: Database schema issue (missing updated_at column). Please check migration status.` };
+        // }
         return { success: false, message: `Failed to update business line (ID: ${id}). Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
     }
 }
@@ -539,7 +539,7 @@ export async function updateBudgetEntry(id: number, formData: FormData) {
       await runDbOperation(async (db) => {
          // Trigger handles updated_at
          const result = await db.run(
-            'UPDATE budgets SET description = ?, amount = ?, year = ?, month = ?, type = ?, business_line_id = ?, cost_center_id = ? WHERE id = ?',
+            'UPDATE budgets SET description = ?, amount = ?, year = ?, month = ?, type = ?, business_line_id = ?, cost_center_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
             [validatedData.description, validatedData.amount, validatedData.year, validatedData.month, validatedData.type, validatedData.business_line_id, validatedData.cost_center_id, id]
         );
          if (result.changes === 0) {
@@ -597,8 +597,17 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
         return { success: false, message: 'No file uploaded or file is empty.' };
     }
 
+    // Check file type
+    const isXlsx = file.name.endsWith('.xlsx');
+    const isCsv = file.name.endsWith('.csv');
+
+    if (!isXlsx && !isCsv) {
+        return { success: false, message: 'Invalid file type. Please upload an Excel (.xlsx) or CSV (.csv) file.' };
+    }
+
     try {
         const bytes = await file.arrayBuffer();
+        // The 'xlsx' library can handle both XLSX and CSV
         const workbook = XLSX.read(bytes, { type: 'buffer' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
@@ -620,16 +629,24 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
 
         for (let i = 0; i < data.length; i++) {
             const row = data[i];
-            const rowNum = i + 2;
+            // CSV processing might result in headers being part of the data if not handled properly by sheet_to_json
+            // However, xlsx library usually handles this well. Let's assume headers are correct.
+            const rowNum = i + 2; // Assuming header is row 1, data starts row 2
             const rowErrors: string[] = [];
 
+            // Normalize keys to lowercase and trim whitespace
             const normalizedRow: { [key: string]: any } = {};
             for (const key in row) {
-                if (Object.prototype.hasOwnProperty.call(row, key) && key.trim()) {
-                     normalizedRow[key.toLowerCase().trim()] = row[key];
-                }
-            }
+                 if (Object.prototype.hasOwnProperty.call(row, key) && typeof key === 'string' && key.trim()) {
+                     const normKey = key.toLowerCase().trim();
+                     normalizedRow[normKey] = row[key];
+                 } else if (Object.prototype.hasOwnProperty.call(row, key) && key) {
+                     // Handle cases where keys might not be strings (though less common from xlsx)
+                     normalizedRow[String(key)] = row[key];
+                 }
+             }
 
+            // Skip empty rows
             if (Object.keys(normalizedRow).length === 0 || Object.values(normalizedRow).every(v => v === null || v === undefined || String(v).trim() === '')) {
                  console.log(`Skipping empty row ${rowNum}`);
                  continue;
@@ -637,39 +654,44 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
 
             processedRows.push(normalizedRow);
 
+            // Define expected columns (lowercase)
             const expectedColumns = ['description', 'amount', 'year', 'month', 'type'];
             const optionalColumns = ['business line', 'cost center'];
             const actualColumns = Object.keys(normalizedRow);
 
+            // Check for missing required columns
             expectedColumns.forEach(col => {
-                if (!actualColumns.includes(col)) {
+                 // Also check for existence of the key in the original row to handle case sensitivity issues before normalization
+                 const originalKeyExists = Object.keys(row).some(k => k.toLowerCase().trim() === col);
+                 if (!actualColumns.includes(col) && !originalKeyExists) {
                      rowErrors.push(`Missing required column: '${col}'.`);
-                }
+                 }
             });
 
-            // Extract budget data
+            // Extract and validate data
             const description = normalizedRow['description'];
             const amountStr = normalizedRow['amount'];
             const yearStr = normalizedRow['year'];
             const monthStr = normalizedRow['month'];
-            const type = (normalizedRow['type'] as string)?.toUpperCase().trim();
-            const budgetBusinessLineName = (normalizedRow['business line'] as string)?.toLowerCase().trim();
-            const budgetCostCenterName = (normalizedRow['cost center'] as string)?.toLowerCase().trim();
-
+            const type = (typeof normalizedRow['type'] === 'string' ? normalizedRow['type'] : String(normalizedRow['type']))?.toUpperCase().trim();
+            const budgetBusinessLineName = (typeof normalizedRow['business line'] === 'string' ? normalizedRow['business line'] : String(normalizedRow['business line']))?.toLowerCase().trim();
+            const budgetCostCenterName = (typeof normalizedRow['cost center'] === 'string' ? normalizedRow['cost center'] : String(normalizedRow['cost center']))?.toLowerCase().trim();
 
             // --- Basic Validation ---
             if (!description || typeof description !== 'string' || description.trim() === '') rowErrors.push(`Invalid or missing Description.`);
-            const amount = parseFloat(amountStr);
+            const amount = parseFloat(String(amountStr).replace(/,/g, '')); // Handle potential commas
             if (isNaN(amount) || amount <= 0) rowErrors.push(`Invalid or missing positive Amount (value: '${amountStr}').`);
-            const year = parseInt(yearStr, 10);
-             if (isNaN(year) || year < 1900 || year > 2100) rowErrors.push(`Invalid or missing Year (1900-2100, value: '${yearStr}').`);
-            const month = parseInt(monthStr, 10);
+            const year = parseInt(String(yearStr), 10);
+            if (isNaN(year) || year < 1900 || year > 2100) rowErrors.push(`Invalid or missing Year (1900-2100, value: '${yearStr}').`);
+            const month = parseInt(String(monthStr), 10);
             if (isNaN(month) || month < 1 || month > 12) rowErrors.push(`Invalid or missing Month (1-12, value: '${monthStr}').`);
             if (!type || (type !== 'CAPEX' && type !== 'OPEX')) rowErrors.push(`Invalid or missing Type (must be 'CAPEX' or 'OPEX', value: '${normalizedRow['type']}').`);
 
             // --- Lookup IDs for Budget Line ---
             let budgetBusinessLineId: number | null = null;
-            if (actualColumns.includes('business line') && budgetBusinessLineName) {
+            // Check if 'business line' key exists (case-insensitively) and has a non-empty value
+             const blKeyExists = actualColumns.includes('business line');
+            if (blKeyExists && budgetBusinessLineName && budgetBusinessLineName !== 'undefined' && budgetBusinessLineName !== 'null') {
                 if (businessLineMap.has(budgetBusinessLineName)) {
                     budgetBusinessLineId = businessLineMap.get(budgetBusinessLineName)!;
                 } else {
@@ -678,13 +700,16 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
             }
 
             let budgetCostCenterId: number | null = null;
-            if (actualColumns.includes('cost center') && budgetCostCenterName) {
+            // Check if 'cost center' key exists (case-insensitively) and has a non-empty value
+             const ccKeyExists = actualColumns.includes('cost center');
+            if (ccKeyExists && budgetCostCenterName && budgetCostCenterName !== 'undefined' && budgetCostCenterName !== 'null') {
                 if (costCenterMap.has(budgetCostCenterName)) {
                     budgetCostCenterId = costCenterMap.get(budgetCostCenterName)!;
                 } else {
                     rowErrors.push(`Budget's Cost Center "${normalizedRow['cost center']}" not found.`);
                 }
             }
+
 
             if (rowErrors.length > 0) {
                 errors.push(`Row ${rowNum}: ${rowErrors.join('; ')}`);
@@ -712,15 +737,15 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
         } // End row loop
 
         if (errors.length > 0) {
-            console.error("Spreadsheet Errors:", errors);
-            return { success: false, message: `Spreadsheet contains errors:\n- ${errors.join('\n- ')}\nPlease fix and re-upload.` };
+            console.error("Spreadsheet/CSV Errors:", errors);
+            return { success: false, message: `File contains errors:\n- ${errors.join('\n- ')}\nPlease fix and re-upload.` };
         }
 
         if (budgetEntries.length === 0) {
              if (processedRows.length === 0) {
-                 return { success: false, message: 'Spreadsheet is empty or contains no processable data rows.' };
+                 return { success: false, message: 'File is empty or contains no processable data rows.' };
              } else {
-                 return { success: false, message: 'No valid budget entries found in the spreadsheet after validation.' };
+                 return { success: false, message: 'No valid budget entries found in the file after validation.' };
              }
         }
 
@@ -739,7 +764,7 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
                  await db.run('COMMIT');
              } catch (dbError: any) {
                  await db.run('ROLLBACK');
-                 console.error('Database insertion error during spreadsheet upload:', dbError);
+                 console.error('Database insertion error during file upload:', dbError);
                  throw dbError; // Re-throw to outer catch
              }
          });
@@ -747,20 +772,21 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
         revalidatePath('/budgets');
         revalidatePath('/');
         revalidatePath('/charts'); // Revalidate charts page
-        return { success: true, message: `Successfully imported ${budgetEntries.length} budget entries.` };
+        return { success: true, message: `Successfully imported ${budgetEntries.length} budget entries from ${isXlsx ? 'spreadsheet' : 'CSV'}.` };
 
     } catch (error: any) {
-        console.error('Error processing spreadsheet:', error);
-         if (error.message?.includes('File is not a zip file')) {
+        console.error('Error processing file:', error);
+         if (error.message?.includes('File is not a zip file') && isXlsx) {
+            // This error specifically happens for corrupted XLSX
             return { success: false, message: 'Failed to process spreadsheet: The file is corrupted or not a valid XLSX format.' };
          }
-        let userMessage = 'Failed to process spreadsheet file.';
-          if (error.message?.includes('UNIQUE constraint failed')) { // Should not happen with budgets unless description+date+etc. is unique?
+        let userMessage = `Failed to process ${isXlsx ? 'spreadsheet' : 'CSV'} file.`;
+          if (error.message?.includes('UNIQUE constraint failed')) {
               userMessage = 'Error inserting data: Duplicate budget entry found.';
           } else if (error.message?.includes('FOREIGN KEY constraint failed')) {
-              userMessage = 'Error inserting data: Check if Business Lines or Cost Centers referenced in the sheet exist.';
+              userMessage = 'Error inserting data: Check if Business Lines or Cost Centers referenced in the file exist.';
           } else {
-             userMessage += ` Reason: ${error.message || 'Unknown error'}. Ensure it is a valid Excel (.xlsx) file.`;
+             userMessage += ` Reason: ${error.message || 'Unknown error'}. Ensure it is a valid ${isXlsx ? 'Excel (.xlsx)' : 'CSV (.csv)'} file.`;
           }
 
         return { success: false, message: userMessage };
@@ -826,3 +852,4 @@ export async function prepareBudgetsCsvData(): Promise<{ success: boolean; data:
         return { success: false, data: null, message: `Failed to get budget data for export. Reason: ${error.message || 'Unknown error'}` };
     }
 }
+
