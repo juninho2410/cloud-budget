@@ -789,3 +789,40 @@ export async function getBudgetDataForCharts(): Promise<BudgetChartItem[]> {
        return [];
     }
 }
+
+// --- CSV Export Action ---
+// Fetches budget data and returns it as an array of objects suitable for CSV conversion on the client-side.
+export async function prepareBudgetsCsvData(): Promise<{ success: boolean; data: Record<string, any>[] | null; message?: string }> {
+    try {
+        const budgets = await runDbOperation(async (db) => {
+            // Fetch all necessary columns, including related names
+            return db.all(`
+                SELECT
+                    b.id as "Budget ID",
+                    b.description as "Description",
+                    b.amount as "Amount",
+                    b.year as "Year",
+                    b.month as "Month",
+                    b.type as "Type",
+                    COALESCE(bl.name, '') as "Business Line",
+                    COALESCE(cc.name, '') as "Cost Center",
+                    strftime('%Y-%m-%d %H:%M:%S', b.created_at) as "Created At",
+                    strftime('%Y-%m-%d %H:%M:%S', b.updated_at) as "Updated At"
+                FROM budgets b
+                LEFT JOIN business_lines bl ON b.business_line_id = bl.id
+                LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id
+                ORDER BY b.year DESC, b.month DESC, b.id DESC
+            `);
+        });
+
+        if (!budgets || budgets.length === 0) {
+            return { success: true, data: [], message: 'No budget data to export.' };
+        }
+
+        return { success: true, data: budgets };
+
+    } catch (error: any) {
+        console.error('Failed to prepare budget data for CSV:', error);
+        return { success: false, data: null, message: `Failed to get budget data for export. Reason: ${error.message || 'Unknown error'}` };
+    }
+}

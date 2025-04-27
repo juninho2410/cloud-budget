@@ -1,14 +1,27 @@
 
-import { getBudgets, getBusinessLines, getCostCentersSimple, getBudgetDataForCharts } from '@/app/actions'; // Changed getCostCenters to getCostCentersSimple, Added getBudgetDataForCharts
+'use client'; // Add 'use client' directive for client-side interactions
+
+import { getBudgets, getBusinessLines, getCostCentersSimple, getBudgetDataForCharts, prepareBudgetsCsvData } from '@/app/actions'; // Added prepareBudgetsCsvData
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2 } from 'lucide-react';
+import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2, Download } from 'lucide-react'; // Added Download icon
 import Link from 'next/link';
 import { BudgetCharts } from '@/components/charts/budget-charts';
 import type { BudgetChartItem } from '@/types'; // Import BudgetChartItem
+import { useEffect, useState } from 'react'; // Import useEffect and useState
+import { useToast } from '@/hooks/use-toast'; // Import useToast for notifications
 
+interface DashboardData {
+    totalBudget: number;
+    totalCapex: number;
+    totalOpex: number;
+    budgetEntryCount: number;
+    businessLineCount: number;
+    costCenterCount: number;
+    chartData: BudgetChartItem[];
+}
 
-async function getDashboardData() {
+async function getDashboardData(): Promise<DashboardData> {
     // Use getCostCentersSimple to get the count
     const [budgets, businessLines, costCenters, chartRawData] = await Promise.all([
         getBudgets(),
@@ -35,12 +48,107 @@ async function getDashboardData() {
     };
 }
 
-export default async function DashboardPage() {
-    const data = await getDashboardData();
+export default function DashboardPage() {
+    const [data, setData] = useState<DashboardData | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [downloading, setDownloading] = useState(false);
+    const { toast } = useToast();
+
+    useEffect(() => {
+        async function loadData() {
+            try {
+                setLoading(true);
+                const dashboardData = await getDashboardData();
+                setData(dashboardData);
+            } catch (error) {
+                console.error("Failed to load dashboard data:", error);
+                toast({
+                    title: 'Error Loading Data',
+                    description: 'Could not fetch dashboard information.',
+                    variant: 'destructive',
+                });
+            } finally {
+                setLoading(false);
+            }
+        }
+        loadData();
+    }, [toast]); // Add toast to dependency array
 
      const formatCurrency = (amount: number) => {
         return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
     };
+
+    const handleDownloadCsv = async () => {
+         setDownloading(true);
+         try {
+             const result = await prepareBudgetsCsvData();
+             if (!result.success || !result.data) {
+                 throw new Error(result.message || 'Failed to fetch data for CSV.');
+             }
+
+             if (result.data.length === 0) {
+                 toast({
+                     title: 'No Data',
+                     description: 'There is no budget data to export.',
+                 });
+                 return;
+             }
+
+             // Convert JSON to CSV
+             const headers = Object.keys(result.data[0]);
+             const csvContent = [
+                 headers.join(','), // Header row
+                 ...result.data.map(row =>
+                     headers.map(header => {
+                         let cell = row[header];
+                         // Handle null/undefined and stringify if necessary
+                         if (cell === null || cell === undefined) {
+                             cell = '';
+                         } else {
+                            cell = String(cell);
+                            // Escape commas and quotes within cells
+                            if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {
+                                 cell = `"${cell.replace(/"/g, '""')}"`; // Double quotes for escaping
+                             }
+                         }
+
+                         return cell;
+                     }).join(',')
+                 )
+             ].join('\n');
+
+             // Create blob and trigger download
+             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+             const link = document.createElement('a');
+             const url = URL.createObjectURL(blob);
+             link.setAttribute('href', url);
+             link.setAttribute('download', 'cloudwise_budgets.csv');
+             link.style.visibility = 'hidden';
+             document.body.appendChild(link);
+             link.click();
+             document.body.removeChild(link);
+
+             toast({
+                 title: 'Download Started',
+                 description: 'Your budget data CSV file is downloading.',
+             });
+
+         } catch (error: any) {
+              console.error("Failed to download CSV:", error);
+              toast({
+                  title: 'Download Failed',
+                  description: error.message || 'Could not prepare budget data for download.',
+                  variant: 'destructive',
+              });
+         } finally {
+             setDownloading(false);
+         }
+    };
+
+    if (loading || !data) {
+        // Optional: Show a loading state or skeleton
+        return <div className="text-center p-10">Loading dashboard...</div>;
+    }
 
     return (
         <div className="flex flex-col gap-6">
@@ -139,6 +247,10 @@ export default async function DashboardPage() {
                              <BarChart3 className="mr-2 h-4 w-4" /> View Charts
                          </Button>
                       </Link>
+                       <Button variant="outline" onClick={handleDownloadCsv} disabled={downloading}>
+                           <Download className="mr-2 h-4 w-4" />
+                           {downloading ? 'Preparing...' : 'Download CSV'}
+                       </Button>
                  </CardContent>
              </Card>
 
@@ -169,4 +281,5 @@ export default async function DashboardPage() {
     );
 }
 
-export const dynamic = 'force-dynamic'; // Ensure data is fetched on every request
+// Removed dynamic export as page is now client-side rendered due to hooks
+// export const dynamic = 'force-dynamic';
