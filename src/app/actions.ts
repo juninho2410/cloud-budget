@@ -1,6 +1,7 @@
 
 'use server';
 
+import type { Database } from 'sqlite';
 import { revalidatePath } from 'next/cache';
 import { getDb } from '@/lib/db';
 import type { BusinessLine, CostCenter, Budget, BudgetEntry } from '@/types';
@@ -29,17 +30,15 @@ const BudgetSchema = z.object({
 });
 
 
-// Helper function for database operations
-async function runDbOperation(operation: (db: any) => Promise<any>) {
-  const db = await getDb();
-  try {
-    return await operation(db);
-  } catch (error) {
-    console.error('Database operation failed:', error);
-    // Consider more specific error handling or re-throwing
-    throw new Error('An error occurred during the database operation.');
-  }
+// Updated Helper function for database operations
+// It now simply gets the DB connection and executes the operation.
+// Error handling (try/catch) should be done in the functions calling this helper.
+async function runDbOperation<T>(operation: (db: Database) => Promise<T>): Promise<T> {
+  const db = await getDb(); // getDb should handle its own errors or let them propagate
+  // No try...catch here, let errors propagate to the caller
+  return operation(db);
 }
+
 
 // --- Business Line Actions ---
 
@@ -60,18 +59,26 @@ export async function addBusinessLine(formData: FormData) {
      if (error instanceof z.ZodError) {
        return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
      }
+      // Catch specific database errors directly now
       if (error.message?.includes('UNIQUE constraint failed')) {
         return { success: false, message: `Business line "${name}" already exists.` };
       }
     console.error('Failed to add business line:', error);
-    return { success: false, message: 'Failed to add business line. Please check logs.' };
+    // Generic fallback message
+    return { success: false, message: `Failed to add business line. Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
   }
 }
 
 export async function getBusinessLines(): Promise<BusinessLine[]> {
-  return runDbOperation(async (db) => {
-    return db.all('SELECT id, name FROM business_lines ORDER BY name');
-  });
+   try {
+       return await runDbOperation(async (db) => {
+           return db.all('SELECT id, name FROM business_lines ORDER BY name');
+       });
+   } catch (error: any) {
+        console.error('Failed to get business lines:', error);
+        // Return empty array or throw error depending on desired behavior
+        return [];
+   }
 }
 
 export async function updateBusinessLine(id: number, formData: FormData) {
@@ -79,7 +86,12 @@ export async function updateBusinessLine(id: number, formData: FormData) {
     try {
       BusinessLineSchema.parse({ name });
         await runDbOperation(async (db) => {
-            await db.run('UPDATE business_lines SET name = ? WHERE id = ?', [name, id]);
+            const result = await db.run('UPDATE business_lines SET name = ? WHERE id = ?', [name, id]);
+             if (result.changes === 0) {
+                 // Optionally throw an error if the ID didn't exist
+                 // throw new Error(`Business line with ID ${id} not found.`);
+                 console.warn(`Attempted to update business line ID ${id}, but it was not found.`);
+             }
         });
         revalidatePath('/business-lines');
         revalidatePath('/budgets');
@@ -90,11 +102,12 @@ export async function updateBusinessLine(id: number, formData: FormData) {
         if (error instanceof z.ZodError) {
             return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
         }
+        // Catch specific database errors directly now
         if (error.message?.includes('UNIQUE constraint failed')) {
             return { success: false, message: `Business line "${name}" already exists.` };
         }
-        // More detailed logging for unexpected errors during update
         console.error(`Failed to update business line with ID ${id}:`, error);
+        // Generic fallback message
         return { success: false, message: `Failed to update business line (ID: ${id}). Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
     }
 }
@@ -104,7 +117,12 @@ export async function deleteBusinessLine(id: number) {
   try {
     await runDbOperation(async (db) => {
       // Optionally, check if the business line is in use before deleting, or handle cascades
-      await db.run('DELETE FROM business_lines WHERE id = ?', id);
+       const result = await db.run('DELETE FROM business_lines WHERE id = ?', id);
+        if (result.changes === 0) {
+            console.warn(`Attempted to delete business line ID ${id}, but it was not found.`);
+            // Optionally return a specific message if ID not found
+             // return { success: false, message: `Business line with ID ${id} not found.` };
+        }
     });
     revalidatePath('/business-lines');
     revalidatePath('/cost-centers'); // Cost centers might be affected
@@ -112,9 +130,12 @@ export async function deleteBusinessLine(id: number) {
     revalidatePath('/');
     return { success: true, message: 'Business line deleted successfully.' };
   } catch (error: any) {
-    // Consider specific error handling for foreign key constraints if not handled by cascade
+    // Catch specific database errors, e.g., foreign key constraint if not using CASCADE
+     if (error.message?.includes('FOREIGN KEY constraint failed')) {
+          return { success: false, message: `Cannot delete business line (ID: ${id}) because it is still associated with cost centers or budgets.` };
+     }
     console.error(`Failed to delete business line with ID ${id}:`, error);
-    return { success: false, message: `Failed to delete business line (ID: ${id}). It might be in use. Reason: ${error.message || 'Unknown error'}.` };
+    return { success: false, message: `Failed to delete business line (ID: ${id}). Reason: ${error.message || 'Unknown error'}.` };
   }
 }
 
@@ -145,6 +166,7 @@ export async function addCostCenter(formData: FormData) {
       if (error instanceof z.ZodError) {
             return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
         }
+      // Catch specific database errors directly
       if (error.message?.includes('UNIQUE constraint failed')) {
         return { success: false, message: `Cost center "${name}" already exists.` };
       }
@@ -152,19 +174,24 @@ export async function addCostCenter(formData: FormData) {
           return { success: false, message: `Invalid Business Line selected.` };
        }
     console.error('Failed to add cost center:', error);
-    return { success: false, message: 'Failed to add cost center. Please check logs.' };
+    return { success: false, message: `Failed to add cost center. Reason: ${error.message || 'Unknown error'}. Please check logs.` };
   }
 }
 
 export async function getCostCenters(): Promise<CostCenter[]> {
-  return runDbOperation(async (db) => {
-    return db.all(`
-      SELECT cc.id, cc.name, cc.business_line_id, bl.name as business_line_name
-      FROM cost_centers cc
-      LEFT JOIN business_lines bl ON cc.business_line_id = bl.id
-      ORDER BY cc.name
-    `);
-  });
+   try {
+       return await runDbOperation(async (db) => {
+           return db.all(`
+             SELECT cc.id, cc.name, cc.business_line_id, bl.name as business_line_name
+             FROM cost_centers cc
+             LEFT JOIN business_lines bl ON cc.business_line_id = bl.id
+             ORDER BY cc.name
+           `);
+       });
+    } catch (error: any) {
+         console.error('Failed to get cost centers:', error);
+         return [];
+    }
 }
 
 export async function updateCostCenter(id: number, formData: FormData) {
@@ -180,7 +207,10 @@ export async function updateCostCenter(id: number, formData: FormData) {
     try {
         const parsedData = CostCenterSchema.parse({ name, business_line_id });
         await runDbOperation(async (db) => {
-            await db.run('UPDATE cost_centers SET name = ?, business_line_id = ? WHERE id = ?', [parsedData.name, parsedData.business_line_id, id]);
+             const result = await db.run('UPDATE cost_centers SET name = ?, business_line_id = ? WHERE id = ?', [parsedData.name, parsedData.business_line_id, id]);
+             if (result.changes === 0) {
+                 console.warn(`Attempted to update cost center ID ${id}, but it was not found.`);
+             }
         });
         revalidatePath('/cost-centers');
         revalidatePath('/budgets');
@@ -190,6 +220,7 @@ export async function updateCostCenter(id: number, formData: FormData) {
         if (error instanceof z.ZodError) {
             return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
         }
+        // Catch specific database errors directly
         if (error.message?.includes('UNIQUE constraint failed')) {
             return { success: false, message: `Cost center "${name}" already exists.` };
         }
@@ -204,16 +235,22 @@ export async function updateCostCenter(id: number, formData: FormData) {
 export async function deleteCostCenter(id: number) {
   try {
     await runDbOperation(async (db) => {
-      await db.run('DELETE FROM cost_centers WHERE id = ?', id);
+       const result = await db.run('DELETE FROM cost_centers WHERE id = ?', id);
+        if (result.changes === 0) {
+             console.warn(`Attempted to delete cost center ID ${id}, but it was not found.`);
+        }
     });
     revalidatePath('/cost-centers');
     revalidatePath('/budgets'); // Budgets might be affected
     revalidatePath('/');
     return { success: true, message: 'Cost center deleted successfully.' };
   } catch (error: any) {
-     // Consider specific error handling for foreign key constraints if not handled by cascade
+     // Catch specific database errors
+      if (error.message?.includes('FOREIGN KEY constraint failed')) {
+         return { success: false, message: `Cannot delete cost center (ID: ${id}) because it is still associated with budgets.` };
+      }
     console.error(`Failed to delete cost center with ID ${id}:`, error);
-    return { success: false, message: `Failed to delete cost center (ID: ${id}). It might be in use. Reason: ${error.message || 'Unknown error'}.` };
+    return { success: false, message: `Failed to delete cost center (ID: ${id}). Reason: ${error.message || 'Unknown error'}.` };
   }
 }
 
@@ -259,16 +296,18 @@ export async function addBudgetEntry(formData: FormData) {
          if (error instanceof z.ZodError) {
             return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
         }
+        // Catch specific database errors directly
          if (error.message?.includes('FOREIGN KEY constraint failed')) {
              // Check which foreign key failed (more specific message)
              if (rawData.business_line_id && rawData.cost_center_id) {
+                 // Add logic to check which one is invalid if possible
                  return { success: false, message: 'Invalid Business Line or Cost Center selected.' };
              } else if (rawData.business_line_id) {
                   return { success: false, message: 'Invalid Business Line selected.' };
              } else if (rawData.cost_center_id) {
                   return { success: false, message: 'Invalid Cost Center selected.' };
              } else {
-                 return { success: false, message: 'Invalid Business Line or Cost Center.' }; // Fallback
+                 return { success: false, message: 'Invalid reference to Business Line or Cost Center.' }; // Fallback
              }
          }
         console.error('Failed to add budget entry:', error);
@@ -278,38 +317,48 @@ export async function addBudgetEntry(formData: FormData) {
 
 
 export async function getBudgets(): Promise<Budget[]> {
-  return runDbOperation(async (db) => {
-    return db.all(`
-      SELECT
-        b.id, b.description, b.amount, b.year, b.month, b.type,
-        b.business_line_id, b.cost_center_id,
-        bl.name as business_line_name,
-        cc.name as cost_center_name,
-        b.created_at, b.updated_at
-      FROM budgets b
-      LEFT JOIN business_lines bl ON b.business_line_id = bl.id
-      LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id
-      ORDER BY b.year DESC, b.month DESC, b.id DESC
-    `);
-  });
+   try {
+       return await runDbOperation(async (db) => {
+           return db.all(`
+             SELECT
+               b.id, b.description, b.amount, b.year, b.month, b.type,
+               b.business_line_id, b.cost_center_id,
+               bl.name as business_line_name,
+               cc.name as cost_center_name,
+               b.created_at, b.updated_at
+             FROM budgets b
+             LEFT JOIN business_lines bl ON b.business_line_id = bl.id
+             LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id
+             ORDER BY b.year DESC, b.month DESC, b.id DESC
+           `);
+       });
+    } catch (error: any) {
+       console.error('Failed to get budgets:', error);
+       return [];
+    }
 }
 
 export async function getBudgetById(id: number): Promise<Budget | null> {
-    const result = await runDbOperation(async (db) => {
-        return db.get(`
-            SELECT
-                b.id, b.description, b.amount, b.year, b.month, b.type,
-                b.business_line_id, b.cost_center_id,
-                bl.name as business_line_name,
-                cc.name as cost_center_name,
-                b.created_at, b.updated_at
-            FROM budgets b
-            LEFT JOIN business_lines bl ON b.business_line_id = bl.id
-            LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id
-            WHERE b.id = ?
-        `, id);
-    });
-    return result || null; // Ensure null is returned if not found
+   try {
+       const result = await runDbOperation(async (db) => {
+           return db.get(`
+               SELECT
+                   b.id, b.description, b.amount, b.year, b.month, b.type,
+                   b.business_line_id, b.cost_center_id,
+                   bl.name as business_line_name,
+                   cc.name as cost_center_name,
+                   b.created_at, b.updated_at
+               FROM budgets b
+               LEFT JOIN business_lines bl ON b.business_line_id = bl.id
+               LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id
+               WHERE b.id = ?
+           `, id);
+       });
+       return result || null; // Ensure null is returned if not found
+   } catch (error: any) {
+       console.error(`Failed to get budget with ID ${id}:`, error);
+       return null; // Return null on error
+   }
 }
 
 
@@ -340,10 +389,13 @@ export async function updateBudgetEntry(id: number, formData: FormData) {
       // Use the full BudgetSchema for updates as ID is present
       const validatedData = BudgetSchema.parse(rawData);
       await runDbOperation(async (db) => {
-        await db.run(
+         const result = await db.run(
             'UPDATE budgets SET description = ?, amount = ?, year = ?, month = ?, type = ?, business_line_id = ?, cost_center_id = ? WHERE id = ?',
             [validatedData.description, validatedData.amount, validatedData.year, validatedData.month, validatedData.type, validatedData.business_line_id, validatedData.cost_center_id, id]
         );
+         if (result.changes === 0) {
+              console.warn(`Attempted to update budget entry ID ${id}, but it was not found.`);
+         }
         });
         revalidatePath('/budgets');
         revalidatePath(`/budgets/${id}/edit`); // Revalidate specific edit page
@@ -353,16 +405,18 @@ export async function updateBudgetEntry(id: number, formData: FormData) {
          if (error instanceof z.ZodError) {
             return { success: false, message: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` };
         }
+        // Catch specific database errors directly
         if (error.message?.includes('FOREIGN KEY constraint failed')) {
              // Check which foreign key failed (more specific message)
              if (rawData.business_line_id && rawData.cost_center_id) {
+                 // Add logic to check which one is invalid if possible
                  return { success: false, message: 'Invalid Business Line or Cost Center selected.' };
              } else if (rawData.business_line_id) {
                   return { success: false, message: 'Invalid Business Line selected.' };
              } else if (rawData.cost_center_id) {
                   return { success: false, message: 'Invalid Cost Center selected.' };
              } else {
-                 return { success: false, message: 'Invalid Business Line or Cost Center.' }; // Fallback
+                 return { success: false, message: 'Invalid reference to Business Line or Cost Center.' }; // Fallback
              }
          }
         console.error(`Failed to update budget entry with ID ${id}:`, error);
@@ -374,12 +428,16 @@ export async function updateBudgetEntry(id: number, formData: FormData) {
 export async function deleteBudgetEntry(id: number) {
   try {
     await runDbOperation(async (db) => {
-      await db.run('DELETE FROM budgets WHERE id = ?', id);
+       const result = await db.run('DELETE FROM budgets WHERE id = ?', id);
+       if (result.changes === 0) {
+           console.warn(`Attempted to delete budget entry ID ${id}, but it was not found.`);
+       }
     });
     revalidatePath('/budgets');
     revalidatePath('/');
     return { success: true, message: 'Budget entry deleted successfully.' };
   } catch (error: any) {
+      // Specific FK error handling not needed here unless budgets block deletion of other tables
     console.error(`Failed to delete budget entry with ID ${id}:`, error);
     return { success: false, message: `Failed to delete budget entry (ID: ${id}). Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
   }
@@ -402,9 +460,12 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
         // Explicitly define header row if necessary, e.g., { header: 1 }
         const data = XLSX.utils.sheet_to_json<any>(worksheet);
 
-        const db = await getDb();
-        const businessLines = await db.all('SELECT id, lower(name) as name FROM business_lines');
-        const costCenters = await db.all('SELECT id, lower(name) as name, business_line_id FROM cost_centers');
+        // Use runDbOperation to ensure DB access is handled consistently
+        const { businessLines, costCenters } = await runDbOperation(async (db) => {
+           const businessLines = await db.all('SELECT id, lower(name) as name FROM business_lines');
+           const costCenters = await db.all('SELECT id, lower(name) as name, business_line_id FROM cost_centers');
+           return { businessLines, costCenters };
+        });
 
         // Create maps for quick lookup (case-insensitive)
         const businessLineMap = new Map(businessLines.map(bl => [bl.name, bl.id]));
@@ -558,33 +619,29 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
 
 
         // --- Database Insertion (Transaction) ---
-        await db.run('BEGIN TRANSACTION');
-        try {
-            const stmt = await db.prepare(
-                'INSERT INTO budgets (description, amount, year, month, type, business_line_id, cost_center_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
-            );
-            for (const entry of budgetEntries) {
-                await stmt.run(entry.description, entry.amount, entry.year, entry.month, entry.type, entry.business_line_id, entry.cost_center_id);
-            }
-            await stmt.finalize();
-            await db.run('COMMIT');
-
-            revalidatePath('/budgets');
-            revalidatePath('/');
-            return { success: true, message: `Successfully imported ${budgetEntries.length} budget entries.` };
-        } catch (dbError: any) {
-            await db.run('ROLLBACK');
-            console.error('Database insertion error during spreadsheet upload:', dbError);
-             // Provide more specific feedback if possible (e.g., constraint violations)
-             let userMessage = 'Error inserting data into the database during spreadsheet import.';
-             if (dbError.message?.includes('UNIQUE constraint failed')) {
-                 userMessage += ' There might be duplicate entries.';
-             } else if (dbError.message?.includes('FOREIGN KEY constraint failed')) {
-                 userMessage += ' Check if Business Lines or Cost Centers referenced in the sheet exist.';
+        // Use runDbOperation for transaction handling
+        await runDbOperation(async (db) => {
+             await db.run('BEGIN TRANSACTION');
+             try {
+                 const stmt = await db.prepare(
+                     'INSERT INTO budgets (description, amount, year, month, type, business_line_id, cost_center_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+                 );
+                 for (const entry of budgetEntries) {
+                     await stmt.run(entry.description, entry.amount, entry.year, entry.month, entry.type, entry.business_line_id, entry.cost_center_id);
+                 }
+                 await stmt.finalize();
+                 await db.run('COMMIT');
+             } catch (dbError: any) {
+                 await db.run('ROLLBACK');
+                 console.error('Database insertion error during spreadsheet upload:', dbError);
+                  // Re-throw the specific error to be caught by the outer try/catch
+                 throw dbError;
              }
-            return { success: false, message: `${userMessage} Reason: ${dbError.message}` };
-        }
+         });
 
+        revalidatePath('/budgets');
+        revalidatePath('/');
+        return { success: true, message: `Successfully imported ${budgetEntries.length} budget entries.` };
 
     } catch (error: any) {
         console.error('Error processing spreadsheet:', error);
@@ -592,7 +649,17 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
          if (error.message?.includes('File is not a zip file')) {
             return { success: false, message: 'Failed to process spreadsheet: The file is corrupted or not a valid XLSX format.' };
          }
-        return { success: false, message: `Failed to process spreadsheet file. Ensure it is a valid Excel (.xlsx) file. Error: ${error.message}` };
+         // Handle database errors caught during transaction
+         let userMessage = 'Failed to process spreadsheet file.';
+          if (error.message?.includes('UNIQUE constraint failed')) {
+              userMessage = 'Error inserting data: Duplicate entry found.';
+          } else if (error.message?.includes('FOREIGN KEY constraint failed')) {
+              userMessage = 'Error inserting data: Check if Business Lines or Cost Centers referenced in the sheet exist.';
+          } else {
+             userMessage += ` Ensure it is a valid Excel (.xlsx) file.`;
+          }
+
+        return { success: false, message: `${userMessage} Reason: ${error.message}` };
     }
 }
 
@@ -600,17 +667,22 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
 // --- Chart Data Actions ---
 
 export async function getBudgetDataForCharts() {
-    return runDbOperation(async (db) => {
-        // Fetch data needed for charts
-        // Consider filtering or aggregating here if datasets become large
-        return db.all(`
-      SELECT
-        b.amount, b.type,
-        COALESCE(bl.name, 'Unassigned') as business_line_name,
-        COALESCE(cc.name, 'Unassigned') as cost_center_name
-      FROM budgets b
-      LEFT JOIN business_lines bl ON b.business_line_id = bl.id
-      LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id
-    `);
-    });
+   try {
+       return await runDbOperation(async (db) => {
+           // Fetch data needed for charts
+           // Consider filtering or aggregating here if datasets become large
+           return db.all(`
+         SELECT
+           b.amount, b.type,
+           COALESCE(bl.name, 'Unassigned') as business_line_name,
+           COALESCE(cc.name, 'Unassigned') as cost_center_name
+         FROM budgets b
+         LEFT JOIN business_lines bl ON b.business_line_id = bl.id
+         LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id
+       `);
+       });
+    } catch (error: any) {
+       console.error('Failed to get chart data:', error);
+       return []; // Return empty array on error
+    }
 }
