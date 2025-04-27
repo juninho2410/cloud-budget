@@ -10,19 +10,29 @@ export async function getDb(): Promise<Database> {
       driver: sqlite3.Database,
     });
 
+    // Enable foreign key support
+    await db.run('PRAGMA foreign_keys = ON;');
+
+
     // Create tables if they don't exist
     await db.exec(`
       CREATE TABLE IF NOT EXISTS business_lines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE
+        name TEXT NOT NULL UNIQUE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP -- Added updated_at
       );
 
       CREATE TABLE IF NOT EXISTS cost_centers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         business_line_id INTEGER,
-        FOREIGN KEY (business_line_id) REFERENCES business_lines(id) ON DELETE CASCADE
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- Added updated_at
+        -- Set business_line_id to NULL when the referenced business line is deleted
+        FOREIGN KEY (business_line_id) REFERENCES business_lines(id) ON DELETE SET NULL
       );
+
 
       CREATE TABLE IF NOT EXISTS budgets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,11 +45,12 @@ export async function getDb(): Promise<Database> {
         cost_center_id INTEGER,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        -- Set foreign keys to NULL when the referenced entity is deleted
         FOREIGN KEY (business_line_id) REFERENCES business_lines(id) ON DELETE SET NULL,
         FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id) ON DELETE SET NULL
       );
 
-       -- Add trigger to update 'updated_at' timestamp
+       -- Trigger to update 'updated_at' timestamp for budgets table
       CREATE TRIGGER IF NOT EXISTS update_budgets_updated_at
       AFTER UPDATE ON budgets
       FOR EACH ROW
@@ -47,6 +58,7 @@ export async function getDb(): Promise<Database> {
           UPDATE budgets SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
       END;
 
+       -- Trigger to update 'updated_at' timestamp for business_lines table
       CREATE TRIGGER IF NOT EXISTS update_business_lines_updated_at
       AFTER UPDATE ON business_lines
       FOR EACH ROW
@@ -54,6 +66,7 @@ export async function getDb(): Promise<Database> {
           UPDATE business_lines SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
       END;
 
+       -- Trigger to update 'updated_at' timestamp for cost_centers table
       CREATE TRIGGER IF NOT EXISTS update_cost_centers_updated_at
       AFTER UPDATE ON cost_centers
       FOR EACH ROW
