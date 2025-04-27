@@ -31,17 +31,49 @@ async function addColumnIfNotExists(db: Database, tableName: string, columnName:
     const exists = await columnExists(db, tableName, columnName);
     if (!exists) {
         try {
-            const alterStatement = `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`;
-            await db.run(alterStatement);
-            console.log(`Added column ${columnName} to table ${tableName}`);
+            // Avoid adding columns with non-constant defaults if not needed
+            // Especially DEFAULT CURRENT_TIMESTAMP which caused issues before
+            let alterStatement = `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`;
+             // Check if trying to add a timestamp column with a default
+             if (columnName.endsWith('_at') && columnDefinition.toUpperCase().includes('DEFAULT CURRENT_TIMESTAMP')) {
+                 // Add without default first
+                 const definitionWithoutDefault = columnDefinition.replace(/DEFAULT CURRENT_TIMESTAMP/i, '').trim();
+                 alterStatement = `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definitionWithoutDefault}`;
+                 await db.run(alterStatement);
+                 console.log(`Added column ${columnName} to table ${tableName} (without default). Default will be handled by trigger or application logic.`);
+                 // Note: Triggers might be a better approach for `updated_at` than default values in SQLite.
+             } else {
+                await db.run(alterStatement);
+                console.log(`Added column ${columnName} to table ${tableName}`);
+             }
+
         } catch (error: any) {
              if (error.message?.includes('duplicate column name')) {
                  console.log(`Column ${columnName} already exists in table ${tableName} (detected during add attempt).`);
-             } else {
+             } else if (error.message?.includes('Cannot add a column with non-constant default')) {
+                 console.warn(`SQLite cannot add column ${columnName} with a non-constant default to ${tableName}. Consider adding the column without a default and managing it via triggers or application logic.`);
+                 // Attempt to add without default as a fallback for timestamp columns
+                 if (columnName.endsWith('_at')) {
+                    try {
+                        const definitionWithoutDefault = columnDefinition.replace(/DEFAULT\s+CURRENT_TIMESTAMP/i, '').trim();
+                        await db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definitionWithoutDefault}`);
+                        console.log(`Added column ${columnName} to table ${tableName} without default as a fallback.`);
+                    } catch (fallbackError) {
+                         console.error(`Failed to add column ${columnName} to table ${tableName} even without default:`, fallbackError);
+                         throw error; // Re-throw original error
+                    }
+                 } else {
+                      throw error; // Re-throw if not a timestamp column
+                 }
+             }
+             else {
                 console.error(`Failed to add column ${columnName} to table ${tableName}:`, error);
                 throw error;
              }
         }
+    } else {
+         // console.log(`Column ${columnName} already exists in ${tableName}. Skipping add.`);
+         // Optionally verify the column definition matches if needed
     }
 }
 
@@ -85,7 +117,7 @@ export async function getDb(): Promise<Database> {
     try {
         db = await open({
           filename: './cloudwise.db', // Use a file for persistence
-          driver: sqlite3.Database,
+          driver: sqlite3.verbose(), // Use verbose driver for more detailed logs
         });
         console.log("Database connection opened.");
 
@@ -100,30 +132,32 @@ export async function getDb(): Promise<Database> {
           CREATE TABLE IF NOT EXISTS business_lines (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            -- updated_at DATETIME -- Managed manually or by trigger if needed
           );
         `);
+        // Explicitly add updated_at only if it doesn't exist, without default
         await addColumnIfNotExists(db, 'business_lines', 'updated_at', 'DATETIME');
         console.log("Table business_lines checked/created.");
 
-        // 2. Cost Centers Table (Remove business_line_id)
-        // Check if the old column exists before potentially creating the table without it
+        // 2. Cost Centers Table (No created_at, no updated_at)
+        // Check if the old columns exist before creating the table without them
         await removeColumnIfExists(db, 'cost_centers', 'business_line_id');
+        await removeColumnIfExists(db, 'cost_centers', 'created_at'); // Ensure removal
+        await removeColumnIfExists(db, 'cost_centers', 'updated_at'); // Ensure removal
 
         await db.exec(`
           CREATE TABLE IF NOT EXISTS cost_centers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME
-            -- business_line_id INTEGER column removed
+            name TEXT NOT NULL UNIQUE
+            -- created_at column removed
+            -- updated_at column removed
+            -- business_line_id column removed
           );
         `);
-        await addColumnIfNotExists(db, 'cost_centers', 'updated_at', 'DATETIME');
-        console.log("Table cost_centers checked/created (without business_line_id).");
+        console.log("Table cost_centers checked/created (without business_line_id, created_at, updated_at).");
 
-        // 3. Budgets Table (Remains largely the same, linking to one BL and one CC)
+        // 3. Budgets Table
         await db.exec(`
           CREATE TABLE IF NOT EXISTS budgets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,15 +169,16 @@ export async function getDb(): Promise<Database> {
             business_line_id INTEGER, -- Direct link to one BL
             cost_center_id INTEGER,   -- Direct link to one CC
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME,
+            -- updated_at DATETIME, -- Managed manually or by trigger
             FOREIGN KEY (business_line_id) REFERENCES business_lines(id) ON DELETE SET NULL,
             FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id) ON DELETE SET NULL
           );
         `);
+         // Explicitly add updated_at only if it doesn't exist, without default
         await addColumnIfNotExists(db, 'budgets', 'updated_at', 'DATETIME');
         console.log("Table budgets checked/created.");
 
-        // 4. Junction Table: cost_center_business_lines (NEW)
+        // 4. Junction Table: cost_center_business_lines
         await db.exec(`
           CREATE TABLE IF NOT EXISTS cost_center_business_lines (
             cost_center_id INTEGER NOT NULL,
@@ -157,36 +192,29 @@ export async function getDb(): Promise<Database> {
 
 
         // --- Triggers for updated_at ---
+        // Drop the cost_centers trigger if it exists, as the column is removed
+        await db.exec(`DROP TRIGGER IF EXISTS update_cost_centers_updated_at;`);
+        console.log("Dropped trigger update_cost_centers_updated_at if it existed.");
+
         await db.exec(`
-           -- Trigger for business_lines
+          -- Trigger for business_lines (only if updated_at column exists)
           CREATE TRIGGER IF NOT EXISTS update_business_lines_updated_at
           AFTER UPDATE ON business_lines
           FOR EACH ROW
-          WHEN NEW.updated_at IS NULL OR NEW.updated_at = OLD.updated_at OR NEW.updated_at < OLD.updated_at -- Allow explicit older timestamp if needed, otherwise update
           BEGIN
               UPDATE business_lines SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
           END;
 
-           -- Trigger for cost_centers
-          CREATE TRIGGER IF NOT EXISTS update_cost_centers_updated_at
-          AFTER UPDATE ON cost_centers
-          FOR EACH ROW
-           WHEN NEW.updated_at IS NULL OR NEW.updated_at = OLD.updated_at OR NEW.updated_at < OLD.updated_at
-          BEGIN
-              UPDATE cost_centers SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
-          END;
-
-           -- Trigger for budgets
+           -- Trigger for budgets (only if updated_at column exists)
            CREATE TRIGGER IF NOT EXISTS update_budgets_updated_at
            AFTER UPDATE ON budgets
            FOR EACH ROW
-           WHEN NEW.updated_at IS NULL OR NEW.updated_at = OLD.updated_at OR NEW.updated_at < OLD.updated_at
            BEGIN
                UPDATE budgets SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
            END;
         `);
 
-        console.log("Database triggers created or verified.");
+        console.log("Remaining database triggers created or verified.");
         console.log("Database schema and triggers initialized/verified successfully.");
 
     } catch (error) {
@@ -213,3 +241,5 @@ export async function closeDb(): Promise<void> {
         }
     }
 }
+
+    
