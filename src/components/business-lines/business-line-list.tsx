@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from 'react';
@@ -9,7 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { BusinessLineForm } from './business-line-form';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'; // Added DialogDescription
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
@@ -43,13 +44,23 @@ export function BusinessLineList({ businessLines }: BusinessLineListProps) {
 
    const handleUpdateSubmit = async (formData: FormData) => {
         if (!editingLine) return { success: false, message: 'No business line selected for editing.' };
-        const result = await updateBusinessLine(editingLine.id, formData);
+        // Bind the ID to the update action before passing it to the form
+        const updateActionWithId = updateBusinessLine.bind(null, editingLine.id);
+        const result = await updateActionWithId(formData);
+
         if (result.success) {
             setIsEditDialogOpen(false); // Close dialog on successful update
-             setEditingLine(null);
+             setEditingLine(null); // Clear editing state
              router.refresh(); // Refresh data
         }
-        return result; // Return result for the form to handle toast
+        // The toast is handled by the form itself, just return the result
+        return result;
+    };
+
+   // Function to close the dialog and reset editing state
+    const handleCloseDialog = () => {
+        setIsEditDialogOpen(false);
+        setEditingLine(null);
     };
 
 
@@ -61,13 +72,13 @@ export function BusinessLineList({ businessLines }: BusinessLineListProps) {
          </CardHeader>
          <CardContent>
             {businessLines.length === 0 ? (
-                 <p className="text-muted-foreground">No business lines found. Add one above.</p>
+                 <p className="text-muted-foreground">No business lines found. Add one using the form above.</p>
             ) : (
                 <ul className="space-y-2">
                     {businessLines.map((line) => (
-                        <li key={line.id} className="flex items-center justify-between p-2 border rounded-md">
+                        <li key={line.id} className="flex items-center justify-between p-2 border rounded-md hover:bg-muted/50 transition-colors">
                             <span className="font-medium">{line.name}</span>
-                            <div className="space-x-2">
+                            <div className="space-x-1">
                                 <Button variant="ghost" size="icon" aria-label="Edit Business Line" onClick={() => handleEdit(line)}>
                                     <Pencil className="h-4 w-4" />
                                 </Button>
@@ -77,8 +88,8 @@ export function BusinessLineList({ businessLines }: BusinessLineListProps) {
                                             <Trash2 className="h-4 w-4" />
                                         </Button>
                                     }
-                                    title="Are you sure?"
-                                    description={`This action cannot be undone. This will permanently delete the business line "${line.name}" and potentially affect associated Cost Centers and Budgets.`}
+                                    title={`Delete "${line.name}"?`}
+                                    description={`This action cannot be undone. This will permanently delete the business line "${line.name}". Associated Cost Centers and Budgets might be affected (their business line will be set to null or deletion might fail depending on DB constraints).`}
                                     confirmText="Delete"
                                     onConfirm={() => handleDelete(line.id, line.name)}
                                     confirmVariant='destructive'
@@ -89,20 +100,22 @@ export function BusinessLineList({ businessLines }: BusinessLineListProps) {
                 </ul>
             )}
             {/* Edit Dialog */}
-            <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Edit Business Line</DialogTitle>
-                    </DialogHeader>
-                    {editingLine && (
-                        <BusinessLineForm
-                            initialData={editingLine}
-                            onSubmit={handleUpdateSubmit}
-                            onCancel={() => setIsEditDialogOpen(false)}
-                        />
-                    )}
-                </DialogContent>
-            </Dialog>
+             <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+                 <DialogContent>
+                     <DialogHeader>
+                         <DialogTitle>Edit Business Line</DialogTitle>
+                         <DialogDescription>Update the name for this business line.</DialogDescription>
+                     </DialogHeader>
+                     {editingLine && (
+                         <BusinessLineForm
+                             initialData={editingLine}
+                             onSubmit={handleUpdateSubmit} // Pass the wrapped function
+                             onCancel={handleCloseDialog}
+                             submitButtonText="Update Business Line" // Explicitly set text for edit form
+                         />
+                     )}
+                 </DialogContent>
+             </Dialog>
          </CardContent>
      </Card>
   );

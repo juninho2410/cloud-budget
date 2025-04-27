@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { BusinessLine } from '@/types';
@@ -9,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from '@/hooks/use-toast';
 import type { FormEvent } from 'react';
+import { useEffect } from 'react'; // Import useEffect
 
 const businessLineSchema = z.object({
   name: z.string().min(1, 'Business line name cannot be empty'),
@@ -38,6 +40,12 @@ export function BusinessLineForm({
   const { formState, handleSubmit, control, reset } = form;
   const { isSubmitting } = formState;
 
+   // Effect to reset form when initialData changes (e.g., when opening edit dialog)
+   useEffect(() => {
+       reset({ name: initialData?.name || '' });
+   }, [initialData, reset]);
+
+
   const handleFormSubmit = async (data: z.infer<typeof businessLineSchema>) => {
     const formData = new FormData();
     formData.append('name', data.name);
@@ -51,8 +59,11 @@ export function BusinessLineForm({
     });
 
     if (result.success) {
-        reset({ name: '' }); // Reset form on success
-        onCancel?.(); // Call cancel handler which might close a modal/dialog
+        // For adding, reset to empty. For editing, call onCancel which should close the dialog.
+        if (!initialData) {
+           reset({ name: '' });
+        }
+        onCancel?.(); // Call cancel handler (e.g., close dialog)
     }
   };
 
@@ -86,3 +97,4 @@ export function BusinessLineForm({
     </Form>
   );
 }
+
