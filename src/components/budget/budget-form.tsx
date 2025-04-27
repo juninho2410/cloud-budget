@@ -18,16 +18,16 @@ import type { FormEvent } from 'react';
 const budgetFormSchema = z.object({
     description: z.string().min(1, 'Description cannot be empty'),
     amount: z.preprocess(
-        (val) => (typeof val === 'string' ? parseFloat(val) : val),
-        z.number({ invalid_type_error: "Amount must be a number" }).positive('Amount must be a positive number')
+        (val) => (val === '' || val === null || val === undefined ? undefined : typeof val === 'string' ? parseFloat(val) : val),
+        z.number({ required_error: "Amount is required", invalid_type_error: "Amount must be a number" }).positive('Amount must be a positive number')
     ),
     year: z.preprocess(
-        (val) => (typeof val === 'string' ? parseInt(val, 10) : val),
-        z.number({ invalid_type_error: "Year must be a number" }).int().min(1900, 'Enter a valid year').max(2100, 'Enter a valid year')
+        (val) => (val === '' || val === null || val === undefined ? undefined : typeof val === 'string' ? parseInt(val, 10) : val),
+        z.number({ required_error: "Year is required", invalid_type_error: "Year must be a number" }).int().min(1900, 'Enter a valid year').max(2100, 'Enter a valid year')
     ),
     month: z.preprocess(
-        (val) => (typeof val === 'string' ? parseInt(val, 10) : val),
-        z.number({ invalid_type_error: "Month must be a number" }).int().min(1, 'Enter a valid month (1-12)').max(12, 'Enter a valid month (1-12)')
+        (val) => (val === '' || val === null || val === undefined ? undefined : typeof val === 'string' ? parseInt(val, 10) : val),
+        z.number({ required_error: "Month is required", invalid_type_error: "Month must be a number" }).int().min(1, 'Enter a valid month (1-12)').max(12, 'Enter a valid month (1-12)')
     ),
     type: z.enum(['CAPEX', 'OPEX'], { required_error: "Type is required" }),
     business_line_id: z.string().nullable().optional(), // Can be null or a string ID
@@ -53,12 +53,12 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
         resolver: zodResolver(budgetFormSchema),
         defaultValues: {
             description: initialData?.description || '',
-            amount: initialData?.amount || undefined, // Start with undefined or '' if expecting string input
-            year: initialData?.year || undefined,
-            month: initialData?.month || undefined,
+            amount: initialData?.amount ? String(initialData.amount) : '', // Initialize as string or empty string
+            year: initialData?.year ? String(initialData.year) : '',       // Initialize as string or empty string
+            month: initialData?.month ? String(initialData.month) : '',     // Initialize as string or empty string
             type: initialData?.type || undefined, // Let zod handle the required error if undefined
-            business_line_id: initialData?.business_line_id ? String(initialData.business_line_id) : null,
-            cost_center_id: initialData?.cost_center_id ? String(initialData.cost_center_id) : null,
+            business_line_id: initialData?.business_line_id ? String(initialData.business_line_id) : NONE_VALUE,
+            cost_center_id: initialData?.cost_center_id ? String(initialData.cost_center_id) : NONE_VALUE,
         },
     });
 
@@ -67,7 +67,7 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
 
     // Filter cost centers based on the selected business line
     const selectedBusinessLineId = watch('business_line_id');
-    const filteredCostCenters = selectedBusinessLineId
+    const filteredCostCenters = selectedBusinessLineId && selectedBusinessLineId !== NONE_VALUE
         ? costCenters.filter(cc => cc.business_line_id === parseInt(selectedBusinessLineId, 10) || cc.business_line_id === null) // Also include CCs with no BL
         : costCenters; // Show all if no BL is selected
 
@@ -80,10 +80,10 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
         formData.append('year', String(data.year));
         formData.append('month', String(data.month));
         formData.append('type', data.type);
-        if (data.business_line_id) {
+        if (data.business_line_id && data.business_line_id !== NONE_VALUE) {
            formData.append('business_line_id', data.business_line_id);
         }
-         if (data.cost_center_id) {
+         if (data.cost_center_id && data.cost_center_id !== NONE_VALUE) {
            formData.append('cost_center_id', data.cost_center_id);
         }
 
@@ -132,7 +132,8 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                <FormItem>
                                  <FormLabel>Amount</FormLabel>
                                  <FormControl>
-                                   <Input type="number" step="0.01" placeholder="1000.00" {...field} />
+                                   {/* Ensure value is always a string */}
+                                   <Input type="number" step="0.01" placeholder="1000.00" {...field} value={field.value ?? ''} />
                                  </FormControl>
                                  <FormMessage />
                                </FormItem>
@@ -169,7 +170,8 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                     <FormItem>
                                         <FormLabel>Year</FormLabel>
                                         <FormControl>
-                                            <Input type="number" placeholder="YYYY" {...field} />
+                                             {/* Ensure value is always a string */}
+                                            <Input type="number" placeholder="YYYY" {...field} value={field.value ?? ''} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -182,7 +184,8 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                     <FormItem>
                                         <FormLabel>Month</FormLabel>
                                          <FormControl>
-                                            <Input type="number" placeholder="MM" {...field} />
+                                            {/* Ensure value is always a string */}
+                                            <Input type="number" placeholder="MM" {...field} value={field.value ?? ''} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -198,8 +201,8 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                <FormItem>
                                  <FormLabel>Business Line (Optional)</FormLabel>
                                  <Select
-                                    onValueChange={(value) => field.onChange(value === NONE_VALUE ? null : value)}
-                                    value={field.value ?? NONE_VALUE}
+                                    onValueChange={(value) => field.onChange(value)}
+                                    value={field.value ?? NONE_VALUE} // Use NONE_VALUE if null/undefined
                                   >
                                    <FormControl>
                                      <SelectTrigger>
@@ -226,9 +229,10 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                     <FormItem>
                                         <FormLabel>Cost Center (Optional)</FormLabel>
                                          <Select
-                                            onValueChange={(value) => field.onChange(value === NONE_VALUE ? null : value)}
-                                            value={field.value ?? NONE_VALUE}
-                                            disabled={!selectedBusinessLineId && costCenters.length > 0 && filteredCostCenters.length === 0} // Disable if no BL selected and there are CCs but none match
+                                            onValueChange={(value) => field.onChange(value)}
+                                            value={field.value ?? NONE_VALUE} // Use NONE_VALUE if null/undefined
+                                            // Disable if no BL selected OR if BL selected but no matching CCs
+                                            disabled={(!selectedBusinessLineId || selectedBusinessLineId === NONE_VALUE) || filteredCostCenters.length === 0}
                                             >
                                             <FormControl>
                                                 <SelectTrigger>
@@ -243,6 +247,9 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
                                                         {center.business_line_name && ` (${center.business_line_name})`}
                                                     </SelectItem>
                                                 ))}
+                                                 {filteredCostCenters.length === 0 && selectedBusinessLineId && selectedBusinessLineId !== NONE_VALUE && (
+                                                      <p className="p-2 text-xs text-muted-foreground">No cost centers found for the selected business line.</p>
+                                                )}
                                             </SelectContent>
                                         </Select>
                                         <FormMessage />
@@ -264,4 +271,3 @@ export function BudgetForm({ initialData, businessLines, costCenters, onSubmit, 
         </Card>
     );
 }
-
