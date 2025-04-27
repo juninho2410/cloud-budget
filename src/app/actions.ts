@@ -2,6 +2,8 @@
 'use server';
 
 import type { Database } from 'sqlite';
+import { open } from 'sqlite'; // Import open directly
+import sqlite3 from 'sqlite3'; // Import sqlite3 driver
 import { revalidatePath } from 'next/cache';
 import { getDb } from '@/lib/db';
 import type { BusinessLine, CostCenter, Budget, BudgetEntry, CostCenterWithBusinessLines } from '@/types';
@@ -47,11 +49,20 @@ const BudgetSchema = z.object({
 
 async function runDbOperation<T>(operation: (db: Database) => Promise<T>): Promise<T> {
   const db = await getDb();
-  return operation(db);
+  try {
+    // Enable foreign keys for this operation if not already enabled globally
+    // await db.run('PRAGMA foreign_keys = ON;');
+    return await operation(db);
+  } catch (error) {
+      console.error('An error occurred during the database operation:', error);
+      // Re-throw a generic error or a more specific one if needed
+      throw new Error(`An error occurred during the database operation. Please check server logs.`);
+  }
+  // Note: We don't close the DB here, as it's managed globally in getDb
 }
 
 
-// --- Business Line Actions (Largely unchanged) ---
+// --- Business Line Actions ---
 
 export async function addBusinessLine(formData: FormData) {
   const name = formData.get('name') as string;
@@ -59,11 +70,12 @@ export async function addBusinessLine(formData: FormData) {
   try {
     BusinessLineSchema.parse({ name });
     await runDbOperation(async (db) => {
-      await db.run('INSERT INTO business_lines (name) VALUES (?)', name);
+      // Insert and manually set updated_at
+      await db.run('INSERT INTO business_lines (name, updated_at) VALUES (?, CURRENT_TIMESTAMP)', name);
     });
     revalidatePath('/business-lines');
-    revalidatePath('/cost-centers'); // For potential display changes
-    revalidatePath('/cost-center-associations'); // Revalidate new association page
+    revalidatePath('/cost-centers');
+    revalidatePath('/cost-center-associations');
     revalidatePath('/');
     return { success: true, message: 'Business line added successfully.' };
   } catch (error: any) {
@@ -81,7 +93,7 @@ export async function addBusinessLine(formData: FormData) {
 export async function getBusinessLines(): Promise<BusinessLine[]> {
    try {
        return await runDbOperation(async (db) => {
-           return db.all('SELECT id, name FROM business_lines ORDER BY name');
+           return db.all('SELECT id, name, created_at, updated_at FROM business_lines ORDER BY name');
        });
    } catch (error: any) {
         console.error('Failed to get business lines:', error);
@@ -94,16 +106,17 @@ export async function updateBusinessLine(id: number, formData: FormData) {
     try {
         BusinessLineSchema.parse({ name });
         await runDbOperation(async (db) => {
-            // Set updated_at explicitly to ensure trigger fires correctly if needed
-            // Or rely on the trigger if it handles all cases. Let's rely on the trigger for now.
-            const result = await db.run('UPDATE business_lines SET name = ? WHERE id = ?', [name, id]);
+            // Manually set updated_at on update
+            const result = await db.run('UPDATE business_lines SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [name, id]);
             if (result.changes === 0) {
                  console.warn(`Attempted to update business line ID ${id}, but it was not found.`);
+                 // Optionally throw an error or return a specific message
+                 // throw new Error(`Business line with ID ${id} not found.`);
              }
         });
         revalidatePath('/business-lines');
-        revalidatePath('/cost-centers'); // For potential display changes
-        revalidatePath('/cost-center-associations'); // Revalidate new association page
+        revalidatePath('/cost-centers');
+        revalidatePath('/cost-center-associations');
         revalidatePath('/');
         return { success: true, message: 'Business line updated successfully.' };
     } catch (error: any) {
@@ -131,8 +144,8 @@ export async function deleteBusinessLine(id: number) {
         // This is handled by the FK constraint itself.
     });
     revalidatePath('/business-lines');
-    revalidatePath('/cost-centers'); // For potential display changes
-    revalidatePath('/cost-center-associations'); // Revalidate new association page
+    revalidatePath('/cost-centers');
+    revalidatePath('/cost-center-associations');
     revalidatePath('/budgets'); // Budgets might be affected
     revalidatePath('/');
     return { success: true, message: 'Business line deleted successfully.' };
@@ -156,10 +169,11 @@ export async function addCostCenter(formData: FormData) {
       // Use the updated schema without business_line_id
       const parsedData = CostCenterSchema.omit({id: true}).parse({ name });
     await runDbOperation(async (db) => {
+      // Insert only the name, timestamps are not managed for cost centers
       await db.run('INSERT INTO cost_centers (name) VALUES (?)', [parsedData.name]);
     });
     revalidatePath('/cost-centers');
-    revalidatePath('/cost-center-associations'); // Revalidate new association page
+    revalidatePath('/cost-center-associations');
     revalidatePath('/budgets'); // Budgets might refer to CCs
     revalidatePath('/');
     return { success: true, message: 'Cost center added successfully.' };
@@ -179,9 +193,9 @@ export async function addCostCenter(formData: FormData) {
 export async function getCostCentersSimple(): Promise<CostCenter[]> {
    try {
        return await runDbOperation(async (db) => {
-           // Select basic cost center info
+           // Select basic cost center info - REMOVED created_at, updated_at
            return db.all(`
-             SELECT cc.id, cc.name, cc.created_at, cc.updated_at
+             SELECT cc.id, cc.name
              FROM cost_centers cc
              ORDER BY cc.name
            `);
@@ -196,9 +210,9 @@ export async function getCostCentersSimple(): Promise<CostCenter[]> {
 export async function getCostCentersWithBusinessLines(): Promise<CostCenterWithBusinessLines[]> {
    try {
        return await runDbOperation(async (db) => {
-           // Fetch all cost centers
+           // Fetch all cost centers - REMOVED created_at, updated_at
            const costCenters = await db.all<CostCenter[]>(`
-             SELECT id, name, created_at, updated_at
+             SELECT id, name
              FROM cost_centers
              ORDER BY name
            `);
@@ -246,14 +260,14 @@ export async function updateCostCenter(id: number, formData: FormData) {
     try {
         const parsedData = CostCenterSchema.parse({ id, name }); // Use full schema for update context
         await runDbOperation(async (db) => {
-             // Update only the name, associations are handled separately
+             // Update only the name, associations are handled separately. No timestamp update.
              const result = await db.run('UPDATE cost_centers SET name = ? WHERE id = ?', [parsedData.name, id]);
              if (result.changes === 0) {
                  console.warn(`Attempted to update cost center ID ${id}, but it was not found.`);
              }
         });
         revalidatePath('/cost-centers');
-        revalidatePath('/cost-center-associations'); // Revalidate new association page
+        revalidatePath('/cost-center-associations');
         revalidatePath('/budgets'); // Budgets might refer to CCs
         revalidatePath('/');
         return { success: true, message: 'Cost center updated successfully.' };
@@ -280,7 +294,7 @@ export async function deleteCostCenter(id: number) {
         // Budgets linked via FK with SET NULL will be updated automatically
     });
     revalidatePath('/cost-centers');
-    revalidatePath('/cost-center-associations'); // Revalidate new association page
+    revalidatePath('/cost-center-associations');
     revalidatePath('/budgets'); // Budgets might be affected
     revalidatePath('/');
     return { success: true, message: 'Cost center deleted successfully.' };
@@ -389,7 +403,7 @@ export async function setCostCenterAssociations(costCenterId: number, businessLi
 
 
 
-// --- Budget Actions (Largely unchanged, but spreadsheet needs adjustment) ---
+// --- Budget Actions ---
 
 export async function addBudgetEntry(formData: FormData) {
     const businessLineIdStr = formData.get('business_line_id') as string | null;
@@ -401,23 +415,24 @@ export async function addBudgetEntry(formData: FormData) {
         year: formData.get('year') ? parseInt(formData.get('year') as string, 10) : undefined,
         month: formData.get('month') ? parseInt(formData.get('month') as string, 10) : undefined,
         type: formData.get('type') as 'CAPEX' | 'OPEX' | undefined,
-        business_line_id: businessLineIdStr ? parseInt(businessLineIdStr, 10) : null,
-        cost_center_id: costCenterIdStr ? parseInt(costCenterIdStr, 10) : null,
+        business_line_id: businessLineIdStr && businessLineIdStr !== '__NONE__' ? parseInt(businessLineIdStr, 10) : null,
+        cost_center_id: costCenterIdStr && costCenterIdStr !== '__NONE__' ? parseInt(costCenterIdStr, 10) : null,
     };
 
-     if (businessLineIdStr && isNaN(rawData.business_line_id as number)) {
-       return { success: false, message: 'Invalid Business Line ID.' };
+     if (businessLineIdStr && businessLineIdStr !== '__NONE__' && isNaN(rawData.business_line_id as number)) {
+       return { success: false, message: 'Invalid Business Line ID format.' };
      }
-     if (costCenterIdStr && isNaN(rawData.cost_center_id as number)) {
-       return { success: false, message: 'Invalid Cost Center ID.' };
+     if (costCenterIdStr && costCenterIdStr !== '__NONE__' && isNaN(rawData.cost_center_id as number)) {
+       return { success: false, message: 'Invalid Cost Center ID format.' };
      }
 
 
     try {
         const validatedData = BudgetSchema.omit({ id: true }).parse(rawData);
         await runDbOperation(async (db) => {
+        // Manually set updated_at on insert
         await db.run(
-            'INSERT INTO budgets (description, amount, year, month, type, business_line_id, cost_center_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO budgets (description, amount, year, month, type, business_line_id, cost_center_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
             [validatedData.description, validatedData.amount, validatedData.year, validatedData.month, validatedData.type, validatedData.business_line_id, validatedData.cost_center_id]
         );
         });
@@ -500,22 +515,23 @@ export async function updateBudgetEntry(id: number, formData: FormData) {
         year: formData.get('year') ? parseInt(formData.get('year') as string, 10) : undefined,
         month: formData.get('month') ? parseInt(formData.get('month') as string, 10) : undefined,
         type: formData.get('type') as 'CAPEX' | 'OPEX' | undefined,
-        business_line_id: businessLineIdStr ? parseInt(businessLineIdStr, 10) : null,
-        cost_center_id: costCenterIdStr ? parseInt(costCenterIdStr, 10) : null,
+        business_line_id: businessLineIdStr && businessLineIdStr !== '__NONE__' ? parseInt(businessLineIdStr, 10) : null,
+        cost_center_id: costCenterIdStr && costCenterIdStr !== '__NONE__' ? parseInt(costCenterIdStr, 10) : null,
     };
 
-    if (businessLineIdStr && isNaN(rawData.business_line_id as number)) {
-       return { success: false, message: 'Invalid Business Line ID.' };
+    if (businessLineIdStr && businessLineIdStr !== '__NONE__' && isNaN(rawData.business_line_id as number)) {
+       return { success: false, message: 'Invalid Business Line ID format.' };
      }
-    if (costCenterIdStr && isNaN(rawData.cost_center_id as number)) {
-       return { success: false, message: 'Invalid Cost Center ID.' };
+    if (costCenterIdStr && costCenterIdStr !== '__NONE__' && isNaN(rawData.cost_center_id as number)) {
+       return { success: false, message: 'Invalid Cost Center ID format.' };
      }
 
   try {
       const validatedData = BudgetSchema.parse(rawData);
       await runDbOperation(async (db) => {
+         // Manually set updated_at on update
          const result = await db.run(
-            'UPDATE budgets SET description = ?, amount = ?, year = ?, month = ?, type = ?, business_line_id = ?, cost_center_id = ? WHERE id = ?',
+            'UPDATE budgets SET description = ?, amount = ?, year = ?, month = ?, type = ?, business_line_id = ?, cost_center_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
             [validatedData.description, validatedData.amount, validatedData.year, validatedData.month, validatedData.type, validatedData.business_line_id, validatedData.cost_center_id, id]
         );
          if (result.changes === 0) {
@@ -562,7 +578,7 @@ export async function deleteBudgetEntry(id: number) {
   }
 }
 
-// --- Spreadsheet Upload Action (Needs adjustment for association) ---
+// --- Spreadsheet Upload Action ---
 
 export async function uploadSpreadsheet(formData: FormData): Promise<{ success: boolean; message: string }> {
     const file = formData.get('spreadsheet') as File;
@@ -582,7 +598,6 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
         const { businessLines, costCenters } = await runDbOperation(async (db) => {
            const businessLines = await db.all('SELECT id, lower(name) as name FROM business_lines');
            const costCenters = await db.all('SELECT id, lower(name) as name FROM cost_centers');
-           // We don't need cost_center_business_lines here directly, validation happens during budget insertion
            return { businessLines, costCenters };
         });
 
@@ -613,7 +628,7 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
             processedRows.push(normalizedRow);
 
             const expectedColumns = ['description', 'amount', 'year', 'month', 'type'];
-            const optionalColumns = ['business line', 'cost center']; // Keep these for budget item assignment
+            const optionalColumns = ['business line', 'cost center'];
             const actualColumns = Object.keys(normalizedRow);
 
             expectedColumns.forEach(col => {
@@ -628,7 +643,6 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
             const yearStr = normalizedRow['year'];
             const monthStr = normalizedRow['month'];
             const type = (normalizedRow['type'] as string)?.toUpperCase().trim();
-            // Get the single BL and CC for this *budget line*
             const budgetBusinessLineName = (normalizedRow['business line'] as string)?.toLowerCase().trim();
             const budgetCostCenterName = (normalizedRow['cost center'] as string)?.toLowerCase().trim();
 
@@ -662,12 +676,6 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
                 }
             }
 
-            // --- Association Logic (Optional - Decide if spreadsheet drives CC<->BL association) ---
-            // If you want the spreadsheet to *also* manage the M2M associations,
-            // you'd need additional columns (e.g., "Associated Business Lines" with comma-separated names)
-            // and logic here to parse those names, find their IDs, and call setCostCenterAssociations.
-            // For now, we assume the spreadsheet only assigns a single BL/CC to the *budget item*.
-
             if (rowErrors.length > 0) {
                 errors.push(`Row ${rowNum}: ${rowErrors.join('; ')}`);
             } else {
@@ -678,8 +686,8 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
                          year: year,
                          month: month,
                          type: type as 'CAPEX' | 'OPEX',
-                         business_line_id: budgetBusinessLineId, // Assign the looked-up ID
-                         cost_center_id: budgetCostCenterId,   // Assign the looked-up ID
+                         business_line_id: budgetBusinessLineId,
+                         cost_center_id: budgetCostCenterId,
                      };
                      BudgetSchema.omit({ id: true }).parse(budgetEntry); // Validate before adding
                      budgetEntries.push(budgetEntry);
@@ -711,7 +719,8 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
              await db.run('BEGIN TRANSACTION');
              try {
                  const stmt = await db.prepare(
-                     'INSERT INTO budgets (description, amount, year, month, type, business_line_id, cost_center_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+                     // Manually set updated_at on insert
+                     'INSERT INTO budgets (description, amount, year, month, type, business_line_id, cost_center_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)'
                  );
                  for (const entry of budgetEntries) {
                      await stmt.run(entry.description, entry.amount, entry.year, entry.month, entry.type, entry.business_line_id, entry.cost_center_id);

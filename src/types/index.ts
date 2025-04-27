@@ -2,18 +2,16 @@
 export interface BusinessLine {
   id: number;
   name: string;
-  created_at?: string; // Add created_at if needed from DB
+  created_at?: string;
   updated_at?: string;
 }
 
-// Basic Cost Center type (as stored in DB)
+// Basic Cost Center type (as stored in DB) - removed timestamps
 export interface CostCenter {
   id: number;
   name: string;
-  // business_line_id removed
-  // business_line_name removed
-  created_at?: string; // Add created_at if needed from DB
-  updated_at?: string;
+  // created_at?: string; // Removed
+  // updated_at?: string; // Removed
 }
 
 // Extended Cost Center type including associated Business Lines for M2M
