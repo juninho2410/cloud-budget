@@ -1,9 +1,11 @@
 
+
 export interface BusinessLine {
   id: number;
   name: string;
-  created_at?: string;
-  updated_at?: string;
+  // Removed optional timestamps as they are not always selected/needed
+  // created_at?: string;
+  // updated_at?: string;
 }
 
 // Basic Cost Center type (as stored in DB) - removed timestamps
@@ -58,3 +60,5 @@ export type GroupedChartData = {
   CAPEX: number;
   OPEX: number;
 }[];
+
+```

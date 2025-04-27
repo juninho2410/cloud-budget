@@ -71,7 +71,8 @@ export async function addBusinessLine(formData: FormData) {
     BusinessLineSchema.parse({ name });
     await runDbOperation(async (db) => {
       // Insert and manually set updated_at
-      await db.run('INSERT INTO business_lines (name, updated_at) VALUES (?, CURRENT_TIMESTAMP)', name);
+      // Updated_at is handled by trigger now
+      await db.run('INSERT INTO business_lines (name) VALUES (?)', name);
     });
     revalidatePath('/business-lines');
     revalidatePath('/cost-centers');
@@ -93,7 +94,8 @@ export async function addBusinessLine(formData: FormData) {
 export async function getBusinessLines(): Promise<BusinessLine[]> {
    try {
        return await runDbOperation(async (db) => {
-           return db.all('SELECT id, name, created_at, updated_at FROM business_lines ORDER BY name');
+           // Select only id and name to align with type and avoid column errors
+           return db.all('SELECT id, name FROM business_lines ORDER BY name');
        });
    } catch (error: any) {
         console.error('Failed to get business lines:', error);
@@ -106,8 +108,8 @@ export async function updateBusinessLine(id: number, formData: FormData) {
     try {
         BusinessLineSchema.parse({ name });
         await runDbOperation(async (db) => {
-            // Manually set updated_at on update
-            const result = await db.run('UPDATE business_lines SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [name, id]);
+            // Trigger will handle updated_at
+            const result = await db.run('UPDATE business_lines SET name = ? WHERE id = ?', [name, id]);
             if (result.changes === 0) {
                  console.warn(`Attempted to update business line ID ${id}, but it was not found.`);
                  // Optionally throw an error or return a specific message
@@ -127,6 +129,10 @@ export async function updateBusinessLine(id: number, formData: FormData) {
             return { success: false, message: `Business line "${name}" already exists.` };
         }
         console.error(`Failed to update business line with ID ${id}:`, error);
+        // Check if the error message indicates a missing column (like updated_at)
+        if (error.message?.includes('no such column: updated_at')) {
+            return { success: false, message: `Failed to update business line (ID: ${id}). Reason: Database schema issue (missing updated_at column). Please check migration status.` };
+        }
         return { success: false, message: `Failed to update business line (ID: ${id}). Reason: ${error.message || 'Unknown error'}. Please check server logs.` };
     }
 }
@@ -430,9 +436,9 @@ export async function addBudgetEntry(formData: FormData) {
     try {
         const validatedData = BudgetSchema.omit({ id: true }).parse(rawData);
         await runDbOperation(async (db) => {
-        // Manually set updated_at on insert
+        // Manually set updated_at on insert - handled by trigger
         await db.run(
-            'INSERT INTO budgets (description, amount, year, month, type, business_line_id, cost_center_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
+            'INSERT INTO budgets (description, amount, year, month, type, business_line_id, cost_center_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
             [validatedData.description, validatedData.amount, validatedData.year, validatedData.month, validatedData.type, validatedData.business_line_id, validatedData.cost_center_id]
         );
         });
@@ -529,9 +535,9 @@ export async function updateBudgetEntry(id: number, formData: FormData) {
   try {
       const validatedData = BudgetSchema.parse(rawData);
       await runDbOperation(async (db) => {
-         // Manually set updated_at on update
+         // Trigger handles updated_at
          const result = await db.run(
-            'UPDATE budgets SET description = ?, amount = ?, year = ?, month = ?, type = ?, business_line_id = ?, cost_center_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            'UPDATE budgets SET description = ?, amount = ?, year = ?, month = ?, type = ?, business_line_id = ?, cost_center_id = ? WHERE id = ?',
             [validatedData.description, validatedData.amount, validatedData.year, validatedData.month, validatedData.type, validatedData.business_line_id, validatedData.cost_center_id, id]
         );
          if (result.changes === 0) {
@@ -719,8 +725,8 @@ export async function uploadSpreadsheet(formData: FormData): Promise<{ success: 
              await db.run('BEGIN TRANSACTION');
              try {
                  const stmt = await db.prepare(
-                     // Manually set updated_at on insert
-                     'INSERT INTO budgets (description, amount, year, month, type, business_line_id, cost_center_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)'
+                     // updated_at handled by trigger
+                     'INSERT INTO budgets (description, amount, year, month, type, business_line_id, cost_center_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
                  );
                  for (const entry of budgetEntries) {
                      await stmt.run(entry.description, entry.amount, entry.year, entry.month, entry.type, entry.business_line_id, entry.cost_center_id);
