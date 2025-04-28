@@ -6,8 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2, Download, Receipt } from 'lucide-react'; // Added Download, Receipt icons
 import Link from 'next/link';
-import { BudgetCharts } from '@/components/charts/budget-charts'; // Re-added BudgetCharts import
-import type { ChartItem } from '@/types'; // Import ChartItem
+// Removed import for BudgetCharts as it's no longer rendered directly on this page
+// import { BudgetCharts } from '@/components/charts/budget-charts';
+import type { ChartItem } from '@/types'; // Keep ChartItem type if needed for data processing
 import { useEffect, useState } from 'react'; // Import useEffect and useState
 import { useToast } from '@/hooks/use-toast'; // Import useToast for notifications
 
@@ -20,7 +21,8 @@ interface DashboardData {
     expenseEntryCount: number; // Added expense count
     businessLineCount: number;
     costCenterCount: number;
-    chartData: ChartItem[]; // Re-added chartData
+    // Keep chartData if needed for calculations, even if not displayed
+    chartData: ChartItem[];
 }
 
 async function getDashboardData(): Promise<DashboardData> {
@@ -30,7 +32,7 @@ async function getDashboardData(): Promise<DashboardData> {
         getExpenses(), // Fetch expenses
         getBusinessLines(),
         getCostCentersSimple(),
-        getChartData(), // Re-added chart data fetching
+        getChartData(), // Still fetch chart data for CAPEX/OPEX calculation
     ]);
 
     const totalBudget = budgets.reduce((sum, budget) => sum + budget.amount, 0);
@@ -312,7 +314,8 @@ export default function DashboardPage() {
                  </CardContent>
              </Card>
 
-            {/* Charts Section - Re-added */}
+            {/* Charts Section Removed */}
+            {/*
             {data.chartData.length > 0 ? (
                 <Card>
                     <CardHeader>
@@ -320,7 +323,7 @@ export default function DashboardPage() {
                         <CardDescription>Visual breakdown of your budget and spending.</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        {/* Only render charts client-side to avoid hydration issues */}
+                        {/* Only render charts client-side to avoid hydration issues * /}
                         <BudgetCharts chartData={data.chartData} />
                     </CardContent>
                 </Card>
@@ -334,7 +337,9 @@ export default function DashboardPage() {
                     </CardContent>
                  </Card>
              )}
+             */}
 
         </div>
     );
 }
+
