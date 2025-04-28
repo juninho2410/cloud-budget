@@ -56,7 +56,7 @@ export function ExpenseTable({ expenses }: ExpenseTableProps) {
                         <TableHead>Type</TableHead>
                         <TableHead>Business Line</TableHead>
                         <TableHead>Cost Center</TableHead>
-                        <TableHead className="text-right min-w-[100px]">Actions</TableHead> {/* Added min-width */}
+                        <TableHead className="text-right min-w-[100px]">Actions</TableHead>{/* Added min-width */}
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -108,4 +108,3 @@ export function ExpenseTable({ expenses }: ExpenseTableProps) {
         </div>
     );
 }
-
