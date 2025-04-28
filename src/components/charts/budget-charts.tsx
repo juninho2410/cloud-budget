@@ -76,6 +76,7 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
     const [trendViewType, setTrendViewType] = React.useState<'CAPEX' | 'OPEX'>('OPEX');
     const [comparisonGroupBy, setComparisonGroupBy] = React.useState<'business_line_name' | 'cost_center_name'>('business_line_name'); // State for comparison grouping
     const [selectedMonthlyBlFilter, setSelectedMonthlyBlFilter] = React.useState<string>('__ALL__'); // State for monthly comparison BL filter
+    const [selectedMonthlyTypeFilter, setSelectedMonthlyTypeFilter] = React.useState<'ALL' | 'CAPEX' | 'OPEX'>('ALL'); // State for monthly comparison Type filter
 
     // --- Data Processing ---
 
@@ -98,13 +99,14 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
         }, [{ name: 'CAPEX', value: 0 }, { name: 'OPEX', value: 0 }]).filter(d => d.value > 0);
     }, [chartData]);
 
-    // 2. Budget vs Expense by Month (Composed Chart) - Now with filtering
+    // 2. Budget vs Expense by Month (Composed Chart) - Now with filtering by BL and Type
     const monthlyComparisonData = React.useMemo(() => {
         const monthlyData: Record<string, { monthYear: string; Budget: number; Expense: number }> = {};
 
-        // Filter data based on selected Business Line
+        // Filter data based on selected Business Line and Type
         const filteredData = chartData.filter(item =>
-            selectedMonthlyBlFilter === '__ALL__' || item.business_line_name === selectedMonthlyBlFilter
+            (selectedMonthlyBlFilter === '__ALL__' || item.business_line_name === selectedMonthlyBlFilter) &&
+            (selectedMonthlyTypeFilter === 'ALL' || item.type === selectedMonthlyTypeFilter)
         );
 
         filteredData.forEach(item => {
@@ -121,7 +123,7 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
 
         // Convert to array and sort by monthYear
         return Object.values(monthlyData).sort((a, b) => a.monthYear.localeCompare(b.monthYear));
-    }, [chartData, selectedMonthlyBlFilter]); // Add filter state as dependency
+    }, [chartData, selectedMonthlyBlFilter, selectedMonthlyTypeFilter]); // Add filter states as dependencies
 
 
     // 3. Budget vs Expense by Category (Business Line or Cost Center)
@@ -224,27 +226,46 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
 
              {/* Budget vs Expense by Month (NEW Composed Chart) */}
             <Card className="lg:col-span-2 xl:col-span-3">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <div>
-                        <CardTitle>Budget vs. Expense Trend by Month</CardTitle>
-                        <CardDescription>Comparison of planned budget vs. actual expenses over time.</CardDescription>
-                    </div>
-                     {/* Business Line Filter */}
-                    <Select value={selectedMonthlyBlFilter} onValueChange={setSelectedMonthlyBlFilter}>
-                        <SelectTrigger className="w-[200px]">
-                            <SelectValue placeholder="Filter by Business Line..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="__ALL__">All Business Lines</SelectItem>
-                            {availableBusinessLines.map(blName => (
-                                <SelectItem key={blName} value={blName}>
-                                    {blName}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </CardHeader>
-                 <CardContent className="h-[350px] w-full pt-4">
+                 <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-2 sm:space-y-0 sm:space-x-4 pb-4">
+                     {/* Title and Description */}
+                     <div className="flex-1">
+                         <CardTitle>Budget vs. Expense Trend by Month</CardTitle>
+                         <CardDescription>
+                             Comparison of planned budget vs. actual expenses over time.
+                             {selectedMonthlyBlFilter !== '__ALL__' && ` Filtered by: ${selectedMonthlyBlFilter}.`}
+                             {selectedMonthlyTypeFilter !== 'ALL' && ` Type: ${selectedMonthlyTypeFilter}.`}
+                         </CardDescription>
+                     </div>
+                     {/* Filters */}
+                     <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                         {/* Business Line Filter */}
+                         <Select value={selectedMonthlyBlFilter} onValueChange={setSelectedMonthlyBlFilter}>
+                             <SelectTrigger className="w-full sm:w-[200px]">
+                                 <SelectValue placeholder="Filter by Business Line..." />
+                             </SelectTrigger>
+                             <SelectContent>
+                                 <SelectItem value="__ALL__">All Business Lines</SelectItem>
+                                 {availableBusinessLines.map(blName => (
+                                     <SelectItem key={blName} value={blName}>
+                                         {blName}
+                                     </SelectItem>
+                                 ))}
+                             </SelectContent>
+                         </Select>
+                          {/* Type (CAPEX/OPEX) Filter */}
+                         <Select value={selectedMonthlyTypeFilter} onValueChange={(value: 'ALL' | 'CAPEX' | 'OPEX') => setSelectedMonthlyTypeFilter(value)}>
+                             <SelectTrigger className="w-full sm:w-[150px]">
+                                 <SelectValue placeholder="Filter by Type..." />
+                             </SelectTrigger>
+                             <SelectContent>
+                                 <SelectItem value="ALL">All Types</SelectItem>
+                                 <SelectItem value="CAPEX">CAPEX</SelectItem>
+                                 <SelectItem value="OPEX">OPEX</SelectItem>
+                             </SelectContent>
+                         </Select>
+                     </div>
+                 </CardHeader>
+                 <CardContent className="h-[350px] w-full pt-0"> {/* Removed pt-4 */}
                      {monthlyComparisonData.length > 0 ? (
                          <ResponsiveContainer width="100%" height="100%">
                               {/* Use ComposedChart to potentially mix Bar and Line */}
