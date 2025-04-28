@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2, Download, Receipt } from 'lucide-react'; // Added Download, Receipt icons
 import Link from 'next/link';
-// Removed BudgetCharts import as it's no longer used on this page
+import { BudgetCharts } from '@/components/charts/budget-charts'; // Re-added BudgetCharts import
 import type { ChartItem } from '@/types'; // Import ChartItem
 import { useEffect, useState } from 'react'; // Import useEffect and useState
 import { useToast } from '@/hooks/use-toast'; // Import useToast for notifications
@@ -20,7 +20,7 @@ interface DashboardData {
     expenseEntryCount: number; // Added expense count
     businessLineCount: number;
     costCenterCount: number;
-    // chartData removed as it's no longer directly used for rendering here
+    chartData: ChartItem[]; // Re-added chartData
 }
 
 async function getDashboardData(): Promise<DashboardData> {
@@ -30,7 +30,7 @@ async function getDashboardData(): Promise<DashboardData> {
         getExpenses(), // Fetch expenses
         getBusinessLines(),
         getCostCentersSimple(),
-        getChartData(), // Still fetch chart data for calculations
+        getChartData(), // Re-added chart data fetching
     ]);
 
     const totalBudget = budgets.reduce((sum, budget) => sum + budget.amount, 0);
@@ -49,6 +49,7 @@ async function getDashboardData(): Promise<DashboardData> {
         expenseEntryCount: expenses.length, // Add expense count
         businessLineCount: businessLines.length,
         costCenterCount: costCenters.length,
+        chartData: chartRawData, // Include chart data in the return object
     };
 }
 
@@ -311,15 +312,15 @@ export default function DashboardPage() {
                  </CardContent>
              </Card>
 
-            {/* Charts Section - Removed from Dashboard */}
-            {/*
-             {data.chartData.length > 0 ? (
+            {/* Charts Section - Re-added */}
+            {data.chartData.length > 0 ? (
                 <Card>
                     <CardHeader>
                         <CardTitle>Overview Charts</CardTitle>
                         <CardDescription>Visual breakdown of your budget and spending.</CardDescription>
                     </CardHeader>
                     <CardContent>
+                        {/* Only render charts client-side to avoid hydration issues */}
                         <BudgetCharts chartData={data.chartData} />
                     </CardContent>
                 </Card>
@@ -333,11 +334,7 @@ export default function DashboardPage() {
                     </CardContent>
                  </Card>
              )}
-            */}
 
         </div>
     );
 }
-
-
-    
