@@ -1,0 +1,43 @@
+# Git files
+.git
+.gitignore
+
+# Docker files
+Dockerfile
+.dockerignore
+
+# Node modules
+node_modules
+
+# Next.js build output and cache
+.next
+
+# Build artifacts
+build
+dist
+
+# Environment variables
+.env
+.env*.local
+
+# Editor configuration
+.vscode
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# SQLite database file (optional: uncomment if you want to build without including the DB)
+# cloudwise.db
+# cloudwise.db-journal
+
+# Other temporary files
+*.swp
+*.bak
