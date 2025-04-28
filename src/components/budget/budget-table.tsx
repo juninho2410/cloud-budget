@@ -1,7 +1,8 @@
 
 "use client";
 
-import type { Budget, BusinessLine, CostCenter } from '@/types';
+// Removed unused BusinessLine, CostCenter types
+import type { Budget } from '@/types';
 import {
     Table,
     TableBody,
@@ -21,7 +22,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog';
 import * as React from "react";
 
 interface BudgetTableProps {
-    budgets: Budget[];
+    budgets: Budget[]; // Now receives potentially filtered budgets
 }
 
 export function BudgetTable({ budgets }: BudgetTableProps) {
@@ -37,6 +38,7 @@ export function BudgetTable({ budgets }: BudgetTableProps) {
          });
           if (result.success) {
              // Refresh the page data after deletion
+             // Note: This might refetch all data if filters aren't handled server-side
              router.refresh();
          }
      };
@@ -46,61 +48,65 @@ export function BudgetTable({ budgets }: BudgetTableProps) {
     };
 
     return (
-        <Table>
-            <TableHeader>
-                <TableRow>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Business Line</TableHead>
-                    <TableHead>Cost Center</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-            </TableHeader>
-            <TableBody>
-                {budgets.length === 0 && (
+        // Add overflow-x-auto for smaller screens if table is wide
+        <div className="overflow-x-auto">
+            <Table>
+                <TableHeader>
                     <TableRow>
-                        <TableCell colSpan={7} className="text-center">No budget entries found.</TableCell>
+                        <TableHead>Description</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Business Line</TableHead>
+                        <TableHead>Cost Center</TableHead>
+                        <TableHead className="text-right min-w-[100px]">Actions</TableHead> {/* Added min-width */}
                     </TableRow>
-                )}
-                {budgets.map((budget) => (
-                    <TableRow key={budget.id}>
-                        <TableCell className="font-medium">{budget.description}</TableCell>
-                        <TableCell>{formatCurrency(budget.amount)}</TableCell>
-                        <TableCell>{`${String(budget.month).padStart(2, '0')}/${budget.year}`}</TableCell>
-                        <TableCell>
-                             <Badge variant={budget.type === 'CAPEX' ? 'secondary' : 'outline'}>
-                                 {budget.type}
-                             </Badge>
-                        </TableCell>
-                        <TableCell>{budget.business_line_name || <span className="text-muted-foreground">-</span>}</TableCell>
-                        <TableCell>{budget.cost_center_name || <span className="text-muted-foreground">-</span>}</TableCell>
-                        <TableCell className="text-right space-x-1">
-                             {/* Edit Button */}
-                             <Link href={`/budgets/${budget.id}/edit`} passHref>
-                                 <Button variant="ghost" size="icon" aria-label={`Edit budget entry ${budget.description}`}>
-                                    <Pencil className="h-4 w-4" />
-                                </Button>
-                             </Link>
-                             {/* Delete Button with Confirmation */}
-                             <ConfirmDialog
-                                trigger={
-                                    <Button variant="ghost" size="icon" aria-label={`Delete budget entry ${budget.description}`} className="text-destructive hover:text-destructive/80">
-                                        <Trash2 className="h-4 w-4" />
+                </TableHeader>
+                <TableBody>
+                    {budgets.length === 0 && (
+                        <TableRow>
+                            <TableCell colSpan={7} className="text-center h-24 text-muted-foreground">
+                                No budget entries found matching your filters.
+                            </TableCell>
+                        </TableRow>
+                    )}
+                    {budgets.map((budget) => (
+                        <TableRow key={budget.id}>
+                            <TableCell className="font-medium">{budget.description}</TableCell>
+                            <TableCell>{formatCurrency(budget.amount)}</TableCell>
+                            <TableCell>{`${String(budget.month).padStart(2, '0')}/${budget.year}`}</TableCell>
+                            <TableCell>
+                                <Badge variant={budget.type === 'CAPEX' ? 'secondary' : 'outline'}>
+                                    {budget.type}
+                                </Badge>
+                            </TableCell>
+                            <TableCell>{budget.business_line_name || <span className="text-xs text-muted-foreground italic">N/A</span>}</TableCell>
+                            <TableCell>{budget.cost_center_name || <span className="text-xs text-muted-foreground italic">N/A</span>}</TableCell>
+                            <TableCell className="text-right space-x-1">
+                                {/* Edit Button */}
+                                <Link href={`/budgets/${budget.id}/edit`} passHref>
+                                    <Button variant="ghost" size="icon" aria-label={`Edit budget entry ${budget.description}`}>
+                                        <Pencil className="h-4 w-4" />
                                     </Button>
-                                }
-                                title="Are you sure?"
-                                description={`This action cannot be undone. This will permanently delete the budget entry: "${budget.description}".`}
-                                confirmText="Delete"
-                                onConfirm={() => handleDelete(budget.id)}
-                                confirmVariant='destructive'
-                             />
-                        </TableCell>
-                    </TableRow>
-                ))}
-            </TableBody>
-        </Table>
+                                </Link>
+                                {/* Delete Button with Confirmation */}
+                                <ConfirmDialog
+                                    trigger={
+                                        <Button variant="ghost" size="icon" aria-label={`Delete budget entry ${budget.description}`} className="text-destructive hover:text-destructive/80">
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    }
+                                    title="Are you sure?"
+                                    description={`This action cannot be undone. This will permanently delete the budget entry: "${budget.description}".`}
+                                    confirmText="Delete"
+                                    onConfirm={() => handleDelete(budget.id)}
+                                    confirmVariant='destructive'
+                                />
+                            </TableCell>
+                        </TableRow>
+                    ))}
+                </TableBody>
+            </Table>
+        </div>
     );
 }
-
