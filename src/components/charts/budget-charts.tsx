@@ -75,25 +75,39 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
     const tickColor = resolvedTheme === 'dark' ? 'hsl(var(--muted-foreground))' : 'hsl(var(--muted-foreground))';
     const [trendViewType, setTrendViewType] = React.useState<'CAPEX' | 'OPEX'>('OPEX');
     const [comparisonGroupBy, setComparisonGroupBy] = React.useState<'business_line_name' | 'cost_center_name'>('business_line_name'); // State for comparison grouping
-
+    const [selectedMonthlyBlFilter, setSelectedMonthlyBlFilter] = React.useState<string>('__ALL__'); // State for monthly comparison BL filter
 
     // --- Data Processing ---
 
-    // 1. Total CAPEX vs OPEX (Combined for Budget and Expenses)
-    const totalCapexOpexData = chartData.reduce((acc, item) => {
-        if (item.type === 'CAPEX') {
-            acc[0].value += item.amount; // Add to CAPEX total
-        } else if (item.type === 'OPEX') {
-            acc[1].value += item.amount; // Add to OPEX total
-        }
-        return acc;
-    }, [{ name: 'CAPEX', value: 0 }, { name: 'OPEX', value: 0 }]).filter(d => d.value > 0);
+    // Get unique business lines for the filter dropdown
+    const availableBusinessLines = React.useMemo(() => {
+        const lines = new Set<string>();
+        chartData.forEach(item => lines.add(item.business_line_name || 'Unassigned'));
+        return Array.from(lines).sort();
+    }, [chartData]);
 
-    // 2. Budget vs Expense by Month (Composed Chart)
+    // 1. Total CAPEX vs OPEX (Combined for Budget and Expenses)
+    const totalCapexOpexData = React.useMemo(() => {
+        return chartData.reduce((acc, item) => {
+            if (item.type === 'CAPEX') {
+                acc[0].value += item.amount; // Add to CAPEX total
+            } else if (item.type === 'OPEX') {
+                acc[1].value += item.amount; // Add to OPEX total
+            }
+            return acc;
+        }, [{ name: 'CAPEX', value: 0 }, { name: 'OPEX', value: 0 }]).filter(d => d.value > 0);
+    }, [chartData]);
+
+    // 2. Budget vs Expense by Month (Composed Chart) - Now with filtering
     const monthlyComparisonData = React.useMemo(() => {
         const monthlyData: Record<string, { monthYear: string; Budget: number; Expense: number }> = {};
 
-        chartData.forEach(item => {
+        // Filter data based on selected Business Line
+        const filteredData = chartData.filter(item =>
+            selectedMonthlyBlFilter === '__ALL__' || item.business_line_name === selectedMonthlyBlFilter
+        );
+
+        filteredData.forEach(item => {
             const monthYear = `${item.year}-${String(item.month).padStart(2, '0')}`;
             if (!monthlyData[monthYear]) {
                 monthlyData[monthYear] = { monthYear, Budget: 0, Expense: 0 };
@@ -107,7 +121,7 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
 
         // Convert to array and sort by monthYear
         return Object.values(monthlyData).sort((a, b) => a.monthYear.localeCompare(b.monthYear));
-    }, [chartData]);
+    }, [chartData, selectedMonthlyBlFilter]); // Add filter state as dependency
 
 
     // 3. Budget vs Expense by Category (Business Line or Cost Center)
@@ -210,9 +224,25 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
 
              {/* Budget vs Expense by Month (NEW Composed Chart) */}
             <Card className="lg:col-span-2 xl:col-span-3">
-                <CardHeader>
-                    <CardTitle>Budget vs. Expense Trend by Month</CardTitle>
-                    <CardDescription>Comparison of planned budget vs. actual expenses over time.</CardDescription>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <div>
+                        <CardTitle>Budget vs. Expense Trend by Month</CardTitle>
+                        <CardDescription>Comparison of planned budget vs. actual expenses over time.</CardDescription>
+                    </div>
+                     {/* Business Line Filter */}
+                    <Select value={selectedMonthlyBlFilter} onValueChange={setSelectedMonthlyBlFilter}>
+                        <SelectTrigger className="w-[200px]">
+                            <SelectValue placeholder="Filter by Business Line..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="__ALL__">All Business Lines</SelectItem>
+                            {availableBusinessLines.map(blName => (
+                                <SelectItem key={blName} value={blName}>
+                                    {blName}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </CardHeader>
                  <CardContent className="h-[350px] w-full pt-4">
                      {monthlyComparisonData.length > 0 ? (
@@ -229,7 +259,7 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
                              </ComposedChart>
                          </ResponsiveContainer>
                      ) : (
-                         <p className="text-center text-muted-foreground h-full flex items-center justify-center">No budget or expense data available for monthly comparison.</p>
+                         <p className="text-center text-muted-foreground h-full flex items-center justify-center">No budget or expense data available for the selected filter.</p>
                      )}
                  </CardContent>
             </Card>
@@ -326,3 +356,4 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
         </div>
     );
 }
+
