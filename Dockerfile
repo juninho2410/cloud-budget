@@ -30,17 +30,11 @@ WORKDIR /app
 # Set NODE_ENV to production
 ENV NODE_ENV=production
 
-# Copy necessary files from the builder stage
-COPY --from=builder /app/public ./public
+# Copy necessary files from the builder stage.
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-# Copy the database file if it exists in the builder stage
-# Ensure the database path matches where it's stored/accessed
-COPY --from=builder /app/cloudwise.db ./cloudwise.db
 
-# Switch to the non-root user 'node'
+# Switch to the non-root user node
 USER node
 
 # Expose the port the app runs on (default 3000 for Next.js)
