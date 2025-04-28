@@ -1,4 +1,5 @@
 
+
 'use client'; // Add 'use client' directive for client-side interactions
 
 import { getBudgets, getBusinessLines, getCostCentersSimple, getChartData, prepareBudgetsCsvData, getExpenses, prepareExpensesCsvData } from '@/app/actions'; // Added getExpenses, getChartData, prepareExpensesCsvData
@@ -6,8 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2, Download, Receipt } from 'lucide-react'; // Added Download, Receipt icons
 import Link from 'next/link';
-// Removed import for BudgetCharts as it's no longer rendered directly on this page
-// import { BudgetCharts } from '@/components/charts/budget-charts';
+// Re-add BudgetCharts import as it might be used again
+import { BudgetCharts } from '@/components/charts/budget-charts';
 import type { ChartItem } from '@/types'; // Keep ChartItem type if needed for data processing
 import { useEffect, useState } from 'react'; // Import useEffect and useState
 import { useToast } from '@/hooks/use-toast'; // Import useToast for notifications
@@ -21,7 +22,7 @@ interface DashboardData {
     expenseEntryCount: number; // Added expense count
     businessLineCount: number;
     costCenterCount: number;
-    // Keep chartData if needed for calculations, even if not displayed
+    // Keep chartData for display
     chartData: ChartItem[];
 }
 
@@ -314,30 +315,29 @@ export default function DashboardPage() {
                  </CardContent>
              </Card>
 
-            {/* Charts Section Removed */}
-            {/*
-            {data.chartData.length > 0 ? (
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Overview Charts</CardTitle>
-                        <CardDescription>Visual breakdown of your budget and spending.</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        {/* Only render charts client-side to avoid hydration issues * /}
-                        <BudgetCharts chartData={data.chartData} />
-                    </CardContent>
-                </Card>
-             ) : (
+             {/* Charts Section Re-added */}
+             {data.chartData.length > 0 ? (
                  <Card>
-                    <CardHeader>
-                        <CardTitle>Overview Charts</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <p className="text-muted-foreground">No budget or expense data available to display charts.</p>
-                    </CardContent>
+                     <CardHeader>
+                         <CardTitle>Overview Charts</CardTitle>
+                         <CardDescription>Visual breakdown of your budget and spending.</CardDescription>
+                     </CardHeader>
+                     <CardContent>
+                         {/* Only render charts client-side to avoid hydration issues */}
+                         <BudgetCharts chartData={data.chartData} />
+                     </CardContent>
                  </Card>
-             )}
-             */}
+              ) : (
+                  <Card>
+                     <CardHeader>
+                         <CardTitle>Overview Charts</CardTitle>
+                     </CardHeader>
+                     <CardContent>
+                         <p className="text-muted-foreground">No budget or expense data available to display charts.</p>
+                     </CardContent>
+                  </Card>
+              )}
+
 
         </div>
     );
