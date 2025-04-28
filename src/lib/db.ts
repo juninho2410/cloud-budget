@@ -116,7 +116,7 @@ export async function getDb(): Promise<Database> {
   if (!db) {
     try {
         // Enable verbose logging for the sqlite3 driver *before* opening
-        sqlite3.verbose();
+        // sqlite3.verbose(); // Commented out - can be noisy
 
         db = await open({
           filename: './cloudwise.db', // Use a file for persistence
@@ -193,6 +193,26 @@ export async function getDb(): Promise<Database> {
         `);
         console.log("Junction table cost_center_business_lines checked/created.");
 
+        // 5. Expenses Table (NEW)
+        await db.exec(`
+          CREATE TABLE IF NOT EXISTS expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            description TEXT NOT NULL,
+            amount REAL NOT NULL,
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            type TEXT CHECK(type IN ('CAPEX', 'OPEX')) NOT NULL,
+            business_line_id INTEGER, -- Link to BL (can be null?)
+            cost_center_id INTEGER,   -- Link to CC (can be null?)
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            -- updated_at DATETIME, -- Managed by trigger
+            FOREIGN KEY (business_line_id) REFERENCES business_lines(id) ON DELETE SET NULL,
+            FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id) ON DELETE SET NULL
+          );
+        `);
+        await addColumnIfNotExists(db, 'expenses', 'updated_at', 'DATETIME'); // Add updated_at column
+        console.log("Table expenses checked/created.");
+
 
         // --- Triggers for updated_at ---
         // Drop the cost_centers trigger if it exists, as the column is removed
@@ -220,6 +240,15 @@ export async function getDb(): Promise<Database> {
            BEGIN
                UPDATE budgets SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
            END;
+
+            -- Trigger for expenses (only if updated_at column exists) (NEW)
+            CREATE TRIGGER IF NOT EXISTS update_expenses_updated_at
+            AFTER UPDATE ON expenses
+            FOR EACH ROW
+            WHEN (SELECT 1 FROM pragma_table_info('expenses') WHERE name='updated_at') = 1 -- Only create if column exists
+            BEGIN
+                UPDATE expenses SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+            END;
         `);
 
         console.log("Remaining database triggers created or verified.");

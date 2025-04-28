@@ -1,50 +1,57 @@
 
 'use client'; // Add 'use client' directive for client-side interactions
 
-import { getBudgets, getBusinessLines, getCostCentersSimple, getBudgetDataForCharts, prepareBudgetsCsvData } from '@/app/actions'; // Added prepareBudgetsCsvData
+import { getBudgets, getBusinessLines, getCostCentersSimple, getChartData, prepareBudgetsCsvData, getExpenses } from '@/app/actions'; // Added getExpenses, getChartData
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2, Download } from 'lucide-react'; // Added Download icon
+import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2, Download, Receipt } from 'lucide-react'; // Added Download, Receipt icons
 import Link from 'next/link';
 import { BudgetCharts } from '@/components/charts/budget-charts';
-import type { BudgetChartItem } from '@/types'; // Import BudgetChartItem
+import type { ChartItem } from '@/types'; // Import ChartItem
 import { useEffect, useState } from 'react'; // Import useEffect and useState
 import { useToast } from '@/hooks/use-toast'; // Import useToast for notifications
 
 interface DashboardData {
     totalBudget: number;
-    totalCapex: number;
-    totalOpex: number;
+    totalExpense: number; // Added total expense
+    totalCapex: number; // This will now be combined budget+expense
+    totalOpex: number; // This will now be combined budget+expense
     budgetEntryCount: number;
+    expenseEntryCount: number; // Added expense count
     businessLineCount: number;
     costCenterCount: number;
-    chartData: BudgetChartItem[];
+    chartData: ChartItem[]; // Use ChartItem for combined data
 }
 
 async function getDashboardData(): Promise<DashboardData> {
-    // Use getCostCentersSimple to get the count
-    const [budgets, businessLines, costCenters, chartRawData] = await Promise.all([
+    // Fetch budgets, expenses, BLs, CCs, and combined chart data
+    const [budgets, expenses, businessLines, costCenters, chartRawData] = await Promise.all([
         getBudgets(),
+        getExpenses(), // Fetch expenses
         getBusinessLines(),
-        getCostCentersSimple(), // Changed function call
-        getBudgetDataForCharts(), // Fetch raw chart data
+        getCostCentersSimple(),
+        getChartData(), // Fetch combined chart data
     ]);
 
     const totalBudget = budgets.reduce((sum, budget) => sum + budget.amount, 0);
-    const totalCapex = budgets.filter(b => b.type === 'CAPEX').reduce((sum, b) => sum + b.amount, 0);
-    const totalOpex = budgets.filter(b => b.type === 'OPEX').reduce((sum, b) => sum + b.amount, 0);
+    const totalExpense = expenses.reduce((sum, expense) => sum + expense.amount, 0);
 
-    // Prepare chart data (already fetched as chartRawData which matches BudgetChartItem structure)
-    const chartData: BudgetChartItem[] = chartRawData;
+    // Calculate combined CAPEX/OPEX from chart data for simplicity
+    const totalCapex = chartRawData.filter(b => b.type === 'CAPEX').reduce((sum, b) => sum + b.amount, 0);
+    const totalOpex = chartRawData.filter(b => b.type === 'OPEX').reduce((sum, b) => sum + b.amount, 0);
+
+    const chartData: ChartItem[] = chartRawData; // Use the combined data
 
     return {
         totalBudget,
-        totalCapex,
-        totalOpex,
+        totalExpense,
+        totalCapex, // Combined CAPEX
+        totalOpex, // Combined OPEX
         budgetEntryCount: budgets.length,
+        expenseEntryCount: expenses.length, // Add expense count
         businessLineCount: businessLines.length,
-        costCenterCount: costCenters.length, // Count based on simple list
-        chartData, // Pass prepared chart data
+        costCenterCount: costCenters.length,
+        chartData,
     };
 }
 
@@ -72,7 +79,7 @@ export default function DashboardPage() {
             }
         }
         loadData();
-    }, [toast]); // Add toast to dependency array
+    }, [toast]);
 
      const formatCurrency = (amount: number) => {
         return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
@@ -81,6 +88,7 @@ export default function DashboardPage() {
     const handleDownloadCsv = async () => {
          setDownloading(true);
          try {
+             // TODO: Update prepareBudgetsCsvData or create prepareCombinedCsvData
              const result = await prepareBudgetsCsvData();
              if (!result.success || !result.data) {
                  throw new Error(result.message || 'Failed to fetch data for CSV.');
@@ -94,35 +102,30 @@ export default function DashboardPage() {
                  return;
              }
 
-             // Convert JSON to CSV
              const headers = Object.keys(result.data[0]);
              const csvContent = [
-                 headers.join(','), // Header row
+                 headers.join(','),
                  ...result.data.map(row =>
                      headers.map(header => {
                          let cell = row[header];
-                         // Handle null/undefined and stringify if necessary
                          if (cell === null || cell === undefined) {
                              cell = '';
                          } else {
                             cell = String(cell);
-                            // Escape commas and quotes within cells
                             if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {
-                                 cell = `"${cell.replace(/"/g, '""')}"`; // Double quotes for escaping
+                                 cell = `"${cell.replace(/"/g, '""')}"`;
                              }
                          }
-
                          return cell;
                      }).join(',')
                  )
              ].join('\n');
 
-             // Create blob and trigger download
              const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
              const link = document.createElement('a');
              const url = URL.createObjectURL(blob);
              link.setAttribute('href', url);
-             link.setAttribute('download', 'cloudwise_budgets.csv');
+             link.setAttribute('download', 'cloudwise_budgets.csv'); // Consider changing filename
              link.style.visibility = 'hidden';
              document.body.appendChild(link);
              link.click();
@@ -146,13 +149,12 @@ export default function DashboardPage() {
     };
 
     if (loading || !data) {
-        // Optional: Show a loading state or skeleton
         return <div className="text-center p-10">Loading dashboard...</div>;
     }
 
     return (
         <div className="flex flex-col gap-6">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"> {/* Adjusted grid columns */}
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium">Total Budget</CardTitle>
@@ -163,6 +165,17 @@ export default function DashboardPage() {
                          <p className="text-xs text-muted-foreground">Across {data.budgetEntryCount} entries</p>
                     </CardContent>
                 </Card>
+                 {/* New Total Expense Card */}
+                 <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Total Expenses</CardTitle>
+                        <DollarSign className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{formatCurrency(data.totalExpense)}</div>
+                        <p className="text-xs text-muted-foreground">Across {data.expenseEntryCount} entries</p>
+                    </CardContent>
+                </Card>
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                          <CardTitle className="text-sm font-medium">Total CAPEX</CardTitle>
@@ -170,7 +183,7 @@ export default function DashboardPage() {
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold">{formatCurrency(data.totalCapex)}</div>
-                         {/* <p className="text-xs text-muted-foreground">+10% from last month</p> */}
+                        <p className="text-xs text-muted-foreground">(Budget + Expenses)</p>
                     </CardContent>
                 </Card>
                  <Card>
@@ -180,7 +193,7 @@ export default function DashboardPage() {
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold">{formatCurrency(data.totalOpex)}</div>
-                        {/* <p className="text-xs text-muted-foreground">+5% from last month</p> */}
+                        <p className="text-xs text-muted-foreground">(Budget + Expenses)</p>
                     </CardContent>
                 </Card>
                  <Card>
@@ -215,7 +228,20 @@ export default function DashboardPage() {
                     <CardContent>
                          <div className="text-2xl font-bold">{data.budgetEntryCount}</div>
                          <Link href="/budgets" className="text-xs text-muted-foreground flex items-center hover:text-primary">
-                           View All Entries <ArrowUpRight className="h-3 w-3 ml-1" />
+                           View Budgets <ArrowUpRight className="h-3 w-3 ml-1" />
+                         </Link>
+                    </CardContent>
+                </Card>
+                {/* New Expense Entries Card */}
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Expense Entries</CardTitle>
+                        <Receipt className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{data.expenseEntryCount}</div>
+                        <Link href="/expenses" className="text-xs text-muted-foreground flex items-center hover:text-primary">
+                           View Expenses <ArrowUpRight className="h-3 w-3 ml-1" />
                          </Link>
                     </CardContent>
                 </Card>
@@ -232,6 +258,11 @@ export default function DashboardPage() {
                              <PlusCircle className="mr-2 h-4 w-4" /> Add Budget Entry
                          </Button>
                       </Link>
+                      <Link href="/expenses/add" passHref>
+                         <Button variant="outline">
+                             <Receipt className="mr-2 h-4 w-4" /> Add Expense Entry
+                         </Button>
+                      </Link>
                        <Link href="/cost-center-associations" passHref>
                          <Button variant="outline">
                               <Link2 className="mr-2 h-4 w-4" /> Manage Associations
@@ -239,7 +270,7 @@ export default function DashboardPage() {
                       </Link>
                       <Link href="/upload" passHref>
                          <Button variant="outline">
-                             <Upload className="mr-2 h-4 w-4" /> Upload Spreadsheet
+                             <Upload className="mr-2 h-4 w-4" /> Upload Data
                          </Button>
                       </Link>
                        <Link href="/charts" passHref>
@@ -249,7 +280,7 @@ export default function DashboardPage() {
                       </Link>
                        <Button variant="outline" onClick={handleDownloadCsv} disabled={downloading}>
                            <Download className="mr-2 h-4 w-4" />
-                           {downloading ? 'Preparing...' : 'Download CSV'}
+                           {downloading ? 'Preparing...' : 'Download Budget CSV'}
                        </Button>
                  </CardContent>
              </Card>
@@ -258,21 +289,20 @@ export default function DashboardPage() {
              {data.chartData.length > 0 ? (
                 <Card>
                     <CardHeader>
-                        <CardTitle>Budget Overview Charts</CardTitle>
-                        <CardDescription>Visual breakdown of your spending.</CardDescription>
+                        <CardTitle>Overview Charts</CardTitle>
+                        <CardDescription>Visual breakdown of your budget and spending.</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        {/* Pass the BudgetChartItem[] data */}
-                        <BudgetCharts budgetData={data.chartData} />
+                        <BudgetCharts chartData={data.chartData} />
                     </CardContent>
                 </Card>
              ) : (
                  <Card>
                     <CardHeader>
-                        <CardTitle>Budget Overview Charts</CardTitle>
+                        <CardTitle>Overview Charts</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <p className="text-muted-foreground">No budget data available to display charts.</p>
+                        <p className="text-muted-foreground">No budget or expense data available to display charts.</p>
                     </CardContent>
                  </Card>
              )}
@@ -280,6 +310,3 @@ export default function DashboardPage() {
         </div>
     );
 }
-
-// Removed dynamic export as page is now client-side rendered due to hooks
-// export const dynamic = 'force-dynamic';

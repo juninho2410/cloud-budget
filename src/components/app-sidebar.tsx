@@ -12,6 +12,7 @@ import {
   Upload,
   BarChart3,
   Link2, // Icon for associations
+  Receipt, // Icon for expenses
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -28,10 +29,11 @@ import {
 const menuItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/budgets", label: "Budgets", icon: Sheet },
+  { href: "/expenses", label: "Expenses", icon: Receipt }, // New Expense Item
   { href: "/business-lines", label: "Business Lines", icon: Building2 },
   { href: "/cost-centers", label: "Cost Centers", icon: Target },
-  { href: "/cost-center-associations", label: "Associations", icon: Link2 }, // New Item
-  { href: "/upload", label: "Upload Spreadsheet", icon: Upload },
+  { href: "/cost-center-associations", label: "Associations", icon: Link2 },
+  { href: "/upload", label: "Upload Data", icon: Upload }, // Updated label
   { href: "/charts", label: "Charts", icon: BarChart3 },
 ];
 

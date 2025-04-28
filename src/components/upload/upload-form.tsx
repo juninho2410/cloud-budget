@@ -75,17 +75,17 @@ export function UploadForm() {
   return (
     <Card className="w-full max-w-lg mx-auto">
       <CardHeader>
-        <CardTitle>Upload Budget Data</CardTitle>
+        <CardTitle>Upload Budget & Expense Data</CardTitle>
         <CardDescription>
-          Upload an Excel (.xlsx) or CSV (.csv) file with budget data. Ensure columns match expected format:
-          Description, Amount, Year, Month, Type (CAPEX/OPEX), Business Line (Optional), Cost Center (Optional).
-           Header names are case-insensitive. Lookups (Business Line, Cost Center) are also case-insensitive.
+          Upload an Excel (.xlsx) or CSV (.csv) file. Ensure columns match expected format:
+          Description, Amount, Year, Month, Type (CAPEX/OPEX), Business Line (Optional), Cost Center (Optional), Source (Optional, 'Budget' or 'Expense', defaults to Budget).
+          Header names and lookups are case-insensitive.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid w-full max-w-sm items-center gap-1.5">
-            <Label htmlFor="spreadsheet">Budget File (.xlsx or .csv)</Label>
+            <Label htmlFor="spreadsheet">Data File (.xlsx or .csv)</Label>
             <Input
                 id="spreadsheet"
                 name="spreadsheet"
@@ -109,4 +109,3 @@ export function UploadForm() {
     </Card>
   );
 }
-
