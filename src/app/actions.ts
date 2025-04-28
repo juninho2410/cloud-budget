@@ -284,7 +284,7 @@ export async function updateCostCenter(id: number, formData: FormData) {
         const parsedData = CostCenterSchema.pick({ name: true }).parse({ name });
         await runDbOperation(async (db) => {
              // Update only the name. Associations are handled separately.
-             const result = await db.run('UPDATE cost_centers SET name = ? WHERE id = ?', [parsedData.name, id]);
+             const result = await db.run('UPDATE cost_centers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [parsedData.name, id]);
              if (result.changes === 0) {
                  console.warn(`Attempted to update cost center ID ${id}, but it was not found.`);
                  throw new Error(`Cost center with ID ${id} not found.`);
@@ -1123,8 +1123,8 @@ export async function getChartData(): Promise<ChartItem[]> {
 
 
 // --- CSV Export Action ---
+
 // Fetches budget data and returns it as an array of objects suitable for CSV conversion on the client-side.
-// **TODO:** Update this to include Expenses or create a separate export action?
 export async function prepareBudgetsCsvData(): Promise<{ success: boolean; data: Record<string, any>[] | null; message?: string }> {
     try {
         const budgets = await runDbOperation(async (db) => {
@@ -1159,3 +1159,41 @@ export async function prepareBudgetsCsvData(): Promise<{ success: boolean; data:
         return { success: false, data: null, message: `Failed to get budget data for export. Reason: ${error.message || 'Unknown error'}` };
     }
 }
+
+
+// Fetches expense data and returns it as an array of objects suitable for CSV conversion.
+export async function prepareExpensesCsvData(): Promise<{ success: boolean; data: Record<string, any>[] | null; message?: string }> {
+    try {
+        const expenses = await runDbOperation(async (db) => {
+            // Fetch all necessary columns, including related names
+            return db.all(`
+                SELECT
+                    e.id as "Expense ID",
+                    e.description as "Description",
+                    e.amount as "Amount",
+                    e.year as "Year",
+                    e.month as "Month",
+                    e.type as "Type",
+                    COALESCE(bl.name, '') as "Business Line",
+                    COALESCE(cc.name, '') as "Cost Center",
+                    strftime('%Y-%m-%d %H:%M:%S', e.created_at) as "Created At",
+                    strftime('%Y-%m-%d %H:%M:%S', e.updated_at) as "Updated At"
+                FROM expenses e
+                LEFT JOIN business_lines bl ON e.business_line_id = bl.id
+                LEFT JOIN cost_centers cc ON e.cost_center_id = cc.id
+                ORDER BY e.year DESC, e.month DESC, e.id DESC
+            `);
+        });
+
+        if (!expenses || expenses.length === 0) {
+            return { success: true, data: [], message: 'No expense data to export.' };
+        }
+
+        return { success: true, data: expenses };
+
+    } catch (error: any) {
+        console.error('Failed to prepare expense data for CSV:', error);
+        return { success: false, data: null, message: `Failed to get expense data for export. Reason: ${error.message || 'Unknown error'}` };
+    }
+}
+

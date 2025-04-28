@@ -1,7 +1,7 @@
 
 'use client'; // Add 'use client' directive for client-side interactions
 
-import { getBudgets, getBusinessLines, getCostCentersSimple, getChartData, prepareBudgetsCsvData, getExpenses } from '@/app/actions'; // Added getExpenses, getChartData
+import { getBudgets, getBusinessLines, getCostCentersSimple, getChartData, prepareBudgetsCsvData, getExpenses, prepareExpensesCsvData } from '@/app/actions'; // Added getExpenses, getChartData, prepareExpensesCsvData
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2, Download, Receipt } from 'lucide-react'; // Added Download, Receipt icons
@@ -58,7 +58,8 @@ async function getDashboardData(): Promise<DashboardData> {
 export default function DashboardPage() {
     const [data, setData] = useState<DashboardData | null>(null);
     const [loading, setLoading] = useState(true);
-    const [downloading, setDownloading] = useState(false);
+    const [downloadingBudget, setDownloadingBudget] = useState(false);
+    const [downloadingExpenses, setDownloadingExpenses] = useState(false); // State for expense download
     const { toast } = useToast();
 
     useEffect(() => {
@@ -85,68 +86,91 @@ export default function DashboardPage() {
         return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
     };
 
-    const handleDownloadCsv = async () => {
-         setDownloading(true);
+    // Generic function to handle CSV data generation and download
+    const generateAndDownloadCsv = (data: Record<string, any>[], filename: string) => {
+        if (data.length === 0) {
+            toast({
+                title: 'No Data',
+                description: `There is no data to export for ${filename}.`,
+            });
+            return;
+        }
+
+        const headers = Object.keys(data[0]);
+        const csvContent = [
+            headers.join(','),
+            ...data.map(row =>
+                headers.map(header => {
+                    let cell = row[header];
+                    if (cell === null || cell === undefined) {
+                        cell = '';
+                    } else {
+                        cell = String(cell);
+                        if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {
+                            cell = `"${cell.replace(/"/g, '""')}"`;
+                        }
+                    }
+                    return cell;
+                }).join(',')
+            )
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        toast({
+            title: 'Download Started',
+            description: `Your ${filename} file is downloading.`,
+        });
+    };
+
+    const handleDownloadBudgetCsv = async () => {
+         setDownloadingBudget(true);
          try {
-             // TODO: Update prepareBudgetsCsvData or create prepareCombinedCsvData
              const result = await prepareBudgetsCsvData();
              if (!result.success || !result.data) {
                  throw new Error(result.message || 'Failed to fetch data for CSV.');
              }
-
-             if (result.data.length === 0) {
-                 toast({
-                     title: 'No Data',
-                     description: 'There is no budget data to export.',
-                 });
-                 return;
-             }
-
-             const headers = Object.keys(result.data[0]);
-             const csvContent = [
-                 headers.join(','),
-                 ...result.data.map(row =>
-                     headers.map(header => {
-                         let cell = row[header];
-                         if (cell === null || cell === undefined) {
-                             cell = '';
-                         } else {
-                            cell = String(cell);
-                            if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {
-                                 cell = `"${cell.replace(/"/g, '""')}"`;
-                             }
-                         }
-                         return cell;
-                     }).join(',')
-                 )
-             ].join('\n');
-
-             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-             const link = document.createElement('a');
-             const url = URL.createObjectURL(blob);
-             link.setAttribute('href', url);
-             link.setAttribute('download', 'cloudwise_budgets.csv'); // Consider changing filename
-             link.style.visibility = 'hidden';
-             document.body.appendChild(link);
-             link.click();
-             document.body.removeChild(link);
-
-             toast({
-                 title: 'Download Started',
-                 description: 'Your budget data CSV file is downloading.',
-             });
-
+             generateAndDownloadCsv(result.data, 'cloudwise_budgets.csv');
          } catch (error: any) {
-              console.error("Failed to download CSV:", error);
+              console.error("Failed to download Budget CSV:", error);
               toast({
                   title: 'Download Failed',
                   description: error.message || 'Could not prepare budget data for download.',
                   variant: 'destructive',
               });
          } finally {
-             setDownloading(false);
+             setDownloadingBudget(false);
          }
     };
+
+    const handleDownloadExpenseCsv = async () => {
+        setDownloadingExpenses(true);
+        try {
+            const result = await prepareExpensesCsvData(); // Call the new action
+            if (!result.success || !result.data) {
+                throw new Error(result.message || 'Failed to fetch expense data for CSV.');
+            }
+            generateAndDownloadCsv(result.data, 'cloudwise_expenses.csv'); // Use expense filename
+        } catch (error: any) {
+             console.error("Failed to download Expense CSV:", error);
+             toast({
+                 title: 'Download Failed',
+                 description: error.message || 'Could not prepare expense data for download.',
+                 variant: 'destructive',
+             });
+        } finally {
+            setDownloadingExpenses(false);
+        }
+   };
+
 
     if (loading || !data) {
         return <div className="text-center p-10">Loading dashboard...</div>;
@@ -278,9 +302,14 @@ export default function DashboardPage() {
                              <BarChart3 className="mr-2 h-4 w-4" /> View Charts
                          </Button>
                       </Link>
-                       <Button variant="outline" onClick={handleDownloadCsv} disabled={downloading}>
+                       <Button variant="outline" onClick={handleDownloadBudgetCsv} disabled={downloadingBudget}>
                            <Download className="mr-2 h-4 w-4" />
-                           {downloading ? 'Preparing...' : 'Download Budget CSV'}
+                           {downloadingBudget ? 'Preparing Budget...' : 'Download Budget CSV'}
+                       </Button>
+                       {/* New Download Expense CSV Button */}
+                       <Button variant="outline" onClick={handleDownloadExpenseCsv} disabled={downloadingExpenses}>
+                           <Download className="mr-2 h-4 w-4" />
+                           {downloadingExpenses ? 'Preparing Expenses...' : 'Download Expenses CSV'}
                        </Button>
                  </CardContent>
              </Card>
@@ -310,3 +339,4 @@ export default function DashboardPage() {
         </div>
     );
 }
+
