@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Sheet, Building2, Target, ArrowUpRight, DollarSign, TrendingUp, Upload, BarChart3, PlusCircle, Link2, Download, Receipt } from 'lucide-react'; // Added Download, Receipt icons
 import Link from 'next/link';
-import { BudgetCharts } from '@/components/charts/budget-charts';
+// Removed BudgetCharts import as it's no longer used on this page
 import type { ChartItem } from '@/types'; // Import ChartItem
 import { useEffect, useState } from 'react'; // Import useEffect and useState
 import { useToast } from '@/hooks/use-toast'; // Import useToast for notifications
@@ -20,27 +20,25 @@ interface DashboardData {
     expenseEntryCount: number; // Added expense count
     businessLineCount: number;
     costCenterCount: number;
-    chartData: ChartItem[]; // Use ChartItem for combined data
+    // chartData removed as it's no longer directly used for rendering here
 }
 
 async function getDashboardData(): Promise<DashboardData> {
-    // Fetch budgets, expenses, BLs, CCs, and combined chart data
+    // Fetch budgets, expenses, BLs, CCs, and combined chart data for calculations
     const [budgets, expenses, businessLines, costCenters, chartRawData] = await Promise.all([
         getBudgets(),
         getExpenses(), // Fetch expenses
         getBusinessLines(),
         getCostCentersSimple(),
-        getChartData(), // Fetch combined chart data
+        getChartData(), // Still fetch chart data for calculations
     ]);
 
     const totalBudget = budgets.reduce((sum, budget) => sum + budget.amount, 0);
     const totalExpense = expenses.reduce((sum, expense) => sum + expense.amount, 0);
 
-    // Calculate combined CAPEX/OPEX from chart data for simplicity
+    // Calculate combined CAPEX/OPEX from chart data
     const totalCapex = chartRawData.filter(b => b.type === 'CAPEX').reduce((sum, b) => sum + b.amount, 0);
     const totalOpex = chartRawData.filter(b => b.type === 'OPEX').reduce((sum, b) => sum + b.amount, 0);
-
-    const chartData: ChartItem[] = chartRawData; // Use the combined data
 
     return {
         totalBudget,
@@ -51,7 +49,6 @@ async function getDashboardData(): Promise<DashboardData> {
         expenseEntryCount: expenses.length, // Add expense count
         businessLineCount: businessLines.length,
         costCenterCount: costCenters.length,
-        chartData,
     };
 }
 
@@ -314,7 +311,8 @@ export default function DashboardPage() {
                  </CardContent>
              </Card>
 
-            {/* Charts Section */}
+            {/* Charts Section - Removed from Dashboard */}
+            {/*
              {data.chartData.length > 0 ? (
                 <Card>
                     <CardHeader>
@@ -335,8 +333,11 @@ export default function DashboardPage() {
                     </CardContent>
                  </Card>
              )}
+            */}
 
         </div>
     );
 }
 
+
+    
