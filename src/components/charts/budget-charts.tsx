@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import * as React from "react";
 import { useTheme } from 'next-themes';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Label } from '@/components/ui/label';
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'; // Import Select
 
 interface BudgetChartsProps {
@@ -77,6 +77,7 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
     const [comparisonGroupBy, setComparisonGroupBy] = React.useState<'business_line_name' | 'cost_center_name'>('business_line_name'); // State for comparison grouping
     const [selectedMonthlyBlFilter, setSelectedMonthlyBlFilter] = React.useState<string>('__ALL__'); // State for monthly comparison BL filter
     const [selectedMonthlyTypeFilter, setSelectedMonthlyTypeFilter] = React.useState<'ALL' | 'CAPEX' | 'OPEX'>('ALL'); // State for monthly comparison Type filter
+    const [categoryComparisonTypeFilter, setCategoryComparisonTypeFilter] = React.useState<'ALL' | 'CAPEX' | 'OPEX'>('ALL'); // NEW State for category comparison Type filter
 
     // --- Data Processing ---
 
@@ -126,11 +127,16 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
     }, [chartData, selectedMonthlyBlFilter, selectedMonthlyTypeFilter]); // Add filter states as dependencies
 
 
-    // 3. Budget vs Expense by Category (Business Line or Cost Center)
+    // 3. Budget vs Expense by Category (Business Line or Cost Center) - Now with filtering by Type
     const categoryComparisonData = React.useMemo(() => {
         const categoryData: Record<string, { group: string; Budget: number; Expense: number }> = {};
 
-         chartData.forEach(item => {
+        // Filter by selected Type first
+        const filteredData = chartData.filter(item =>
+            categoryComparisonTypeFilter === 'ALL' || item.type === categoryComparisonTypeFilter
+        );
+
+        filteredData.forEach(item => {
              // Use the selected grouping key
              const groupName = item[comparisonGroupBy] || 'Unassigned';
 
@@ -147,7 +153,7 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
 
          return Object.values(categoryData);
 
-    }, [chartData, comparisonGroupBy]);
+    }, [chartData, comparisonGroupBy, categoryComparisonTypeFilter]); // Add categoryComparisonTypeFilter dependency
 
 
     // 4. Budget Trend by Business Line over Time (Existing, but needs filtering by source)
@@ -285,24 +291,43 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
                  </CardContent>
             </Card>
 
-             {/* Budget vs Expense by Category (NEW Bar Chart) */}
+             {/* Budget vs Expense by Category (NEW Bar Chart with Type Filter) */}
              <Card className="lg:col-span-2 xl:col-span-3">
-                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                     <div>
+                 <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-2 sm:space-y-0 sm:space-x-4 pb-4">
+                     {/* Title and Description */}
+                     <div className="flex-1">
                          <CardTitle>Budget vs. Expense by Category</CardTitle>
-                         <CardDescription>Comparison grouped by Business Line or Cost Center.</CardDescription>
+                         <CardDescription>
+                             Comparison grouped by Business Line or Cost Center.
+                             {categoryComparisonTypeFilter !== 'ALL' && ` Type: ${categoryComparisonTypeFilter}.`}
+                         </CardDescription>
                      </div>
-                      <Select value={comparisonGroupBy} onValueChange={(value: 'business_line_name' | 'cost_center_name') => setComparisonGroupBy(value)}>
-                           <SelectTrigger className="w-[180px]">
+                     {/* Filters */}
+                     <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                          {/* Group By Filter */}
+                         <Select value={comparisonGroupBy} onValueChange={(value: 'business_line_name' | 'cost_center_name') => setComparisonGroupBy(value)}>
+                           <SelectTrigger className="w-full sm:w-[180px]">
                              <SelectValue placeholder="Group by..." />
                            </SelectTrigger>
                            <SelectContent>
                              <SelectItem value="business_line_name">Business Line</SelectItem>
                              <SelectItem value="cost_center_name">Cost Center</SelectItem>
                            </SelectContent>
-                       </Select>
+                         </Select>
+                         {/* Type Filter */}
+                         <Select value={categoryComparisonTypeFilter} onValueChange={(value: 'ALL' | 'CAPEX' | 'OPEX') => setCategoryComparisonTypeFilter(value)}>
+                             <SelectTrigger className="w-full sm:w-[150px]">
+                                 <SelectValue placeholder="Filter by Type..." />
+                             </SelectTrigger>
+                             <SelectContent>
+                                 <SelectItem value="ALL">All Types</SelectItem>
+                                 <SelectItem value="CAPEX">CAPEX</SelectItem>
+                                 <SelectItem value="OPEX">OPEX</SelectItem>
+                             </SelectContent>
+                         </Select>
+                     </div>
                  </CardHeader>
-                 <CardContent className="h-[400px] w-full pt-4"> {/* Increased height */}
+                 <CardContent className="h-[400px] w-full pt-0"> {/* Increased height, removed pt-4 */}
                      {categoryComparisonData.length > 0 ? (
                          <ResponsiveContainer width="100%" height="100%">
                              <BarChart data={categoryComparisonData} layout="vertical" margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
@@ -317,7 +342,7 @@ export function BudgetCharts({ chartData }: BudgetChartsProps) {
                             </BarChart>
                         </ResponsiveContainer>
                      ) : (
-                         <p className="text-center text-muted-foreground h-full flex items-center justify-center">No data available for category comparison.</p>
+                         <p className="text-center text-muted-foreground h-full flex items-center justify-center">No data available for category comparison with the selected filter.</p>
                      )}
                  </CardContent>
             </Card>
